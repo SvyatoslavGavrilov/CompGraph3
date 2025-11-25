@@ -1,230 +1,212 @@
-# Template Rendering Architecture
+## Template Rendering Architecture
 
-## High-Level Rendering Flow
-- `WinMain` creates `TexColumnsApp`, calls `Initialize()`, then runs the `D3DApp::Run()` loop with CRT leak checks enabled for debug builds.
-- Global `Camera cam` exposes fly-camera controls (`MoveBackFwd`, `MoveLeftRight`, `MoveUpDown`, wheel speed adjustments) and feeds matrices to render passes through constant buffers.
-- `Initialize()` performs console setup, optional MSAA configuration, resets the command list, caches descriptor increments, loads textures, builds all root signatures (main, lighting, shadow, post-process), constructs lighting descriptors/shadow maps, fills descriptor heaps, builds geometry/materials/PSOs/render items/frame resources, and boots Dear ImGui.
-- Frame update (`Update`) rotates frame resources, blocks on GPU fences as needed, refreshes camera matrices, runs ImGui frame setup, animates materials, copies dirty object/material/light constants, updates particle and post-process constants, and writes main pass data.
-- `DeferredDraw` executes the staged pipeline each frame: shadow-map pass → G-buffer geometry pass → lighting accumulation into the scene render target → optional debug light-shape overlay → particle rendering (compute + graphics) → post-process full-screen triangle → Dear ImGui draw data → swap-chain present.
-- Resize handling rebuilds the swap-chain buffers, G-buffer attachments, scene texture, descriptor heaps, and projection matrix. Shutdown flushes outstanding GPU work.
+- **Entry Flow**: `WinMain` in `Template2/src/Code/Main/TexColumnsApp.cpp` boots `TexColumnsApp`, which inherits from `D3DApp` in `Template2/src/Common/d3dApp.h` and drives the Direct3D 12 message loop.
+- **Rendering Model**: The app implements a deferred shading pipeline with a geometry pass (`BuildRootSignature`, `BuildPSOs`, `DrawRenderItems`), a shadow pass (`BuildShadowPassRootSignature`, `DrawSceneToShadowMap`), a lighting combine pass (`BuildLightingRootSignature`, `DeferredDraw`), and an optional post-process stage (`BuildPostProcessRootSignature`, `DeferredDraw` tail).
+- **Resource Management**: `FrameResource` objects wrap per-frame command allocators, constant buffers, and light/shadow buffers to support triple buffering (`gNumFrameResources = 3`). Descriptor heaps collect SRVs for textures, G-buffer outputs, and per-light shadow maps.
+- **Geometry & Materials**: Procedural primitives (`BuildShapeGeometry`) and Assimp-loaded meshes (`BuildCustomMeshGeometry`) share a single `MeshGeometry`; materials are created through `CreateMaterial` and stored in `mMaterials`.
+- **Texture System**: `LoadAllTextures` enumerates `Textures/` and stages assets via `DirectX::CreateDDSTextureFromFile12`, caching descriptors in `TexOffsets` for material binding.
+- **Lighting System**: `BuildLights` seeds ambient, point, spot, and directional lights; `UpdateLightCBs` updates GPU buffers, computes shadow matrices, and exposes ImGui controls per light.
+- **Input & Camera**: `Camera` in `Template2/src/Common/Camera.{h,cpp}` provides movement; `OnKeyPressed`, `MoveBackFwd`, `MoveLeftRight`, `MoveUpDown`, and mouse handlers update camera orientation.
+- **User Interface**: Dear ImGui is integrated via `imgui_impl_dx12`/`imgui_impl_win32` for runtime tweaking of transforms, materials, and lighting parameters.
+
+## Include Inventory
+
+```
+../../Common/Camera.h
+../../Common/GeometryGenerator.h
+../../Common/MathHelper.h
+../../Common/UploadBuffer.h
+../../Common/d3dApp.h
+../../Common/d3dUtil.h
+./Compiler/poppack1.h
+./Compiler/pushpack1.h
+BaseImporter.h
+Camera.h
+Carbon/Carbon.h
+Compiler/pstdint.h
+D3Dcompiler.h
+DDSTextureLoader.h
+DirectXCollision.h
+DirectXColors.h
+DirectXMath.h
+DirectXPackedVector.h
+Exceptional.h
+FrameResource.h
+GameTimer.h
+GeometryGenerator.h
+IOStream.hpp
+LogStream.hpp
+Logger.hpp
+MathFunctions.h
+MathHelper.h
+NullLogger.hpp
+SmoothingGroups.inl
+StringComparison.h
+TargetConditionals.h
+Windows.h
+WindowsX.h
+algorithm
+android/asset_manager.h
+android/asset_manager_jni.h
+android/native_activity.h
+array
+assert.h
+assimp/ByteSwapper.h
+assimp/Compiler/pstdint.h
+assimp/DefaultIOStream.h
+assimp/DefaultIOSystem.h
+assimp/DefaultLogger.hpp
+assimp/Exceptional.h
+assimp/GltfMaterial.h
+assimp/Hash.h
+assimp/IOStream.hpp
+assimp/IOSystem.hpp
+assimp/Importer.hpp
+assimp/ParsingUtils.h
+assimp/ProgressHandler.hpp
+assimp/SGSpatialSort.h
+assimp/StreamReader.h
+assimp/StringComparison.h
+assimp/StringUtils.h
+assimp/TinyFormatter.h
+assimp/aabb.h
+assimp/ai_assert.h
+assimp/anim.h
+assimp/camera.h
+assimp/cexport.h
+assimp/color4.h
+assimp/config.h
+assimp/defs.h
+assimp/importerdesc.h
+assimp/light.h
+assimp/material.h
+assimp/matrix3x3.h
+assimp/matrix4x4.h
+assimp/mesh.h
+assimp/metadata.h
+assimp/postprocess.h
+assimp/quaternion.h
+assimp/scene.h
+assimp/texture.h
+assimp/types.h
+assimp/vector2.h
+assimp/vector3.h
+cassert
+cctype
+cexport.h
+chrono
+cmath
+color4.inl
+comdef.h
+crtdbg.h
+cstdarg
+cstddef
+cstdint
+cstdio
+cstdlib
+cstring
+d3d11_1.h
+d3d12.h
+d3dApp.h
+d3dUtil.h
+d3dcompiler.h
+d3dx12.h
+defs.h
+direct.h
+dwmapi.h
+dxgi1_4.h
+dxgiformat.h
+exception
+filesystem
+float.h
+fstream
+functional
+imconfig.h
+imgui.h
+imgui_impl_dx12.h
+imgui_impl_win32.h
+imgui_internal.h
+imgui_user.h
+imgui_user.inl
+imm.h
+immintrin.h
+imstb_rectpack.h
+imstb_textedit.h
+imstb_truetype.h
+iomanip
+iostream
+limits
+limits.h
+list
+locale
+map
+material.inl
+math.h
+matrix3x3.h
+matrix3x3.inl
+matrix4x4.h
+matrix4x4.inl
+memory
+misc/freetype/imgui_freetype.h
+model.h
+new
+nmmintrin.h
+pugixml.hpp
+quaternion.h
+quaternion.inl
+set
+shellapi.h
+signal.h
+sstream
+stb_sprintf.h
+stb_truetype.h
+stdarg.h
+stddef.h
+stdexcept
+stdint.h
+stdio.h
+stdlib.h
+string
+string.h
+sys/inttypes.h
+sys/stat.h
+sys/types.h
+sys/wait.h
+tchar.h
+types.h
+unistd.h
+unordered_map
+unordered_set
+utility
+vector
+vector2.inl
+vector3.inl
+wchar.h
+windows.h
+windowsx.h
+wrl.h
+xinput.h
+zlib.h
+
+Total: 175
+```
 
 ## TexColumnsApp Structure
-- **Class Definition:** `TexColumnsApp : public D3DApp` adds overrides for lifecycle (`Initialize`, `OnResize`, `Update`, `DeferredDraw`), input handlers, camera movement, plus helpers for camera updates, shadow-map view creation, material animation, object/light/material constant updates, main pass update, G-buffer creation, scene texture creation, texture loading, root signature setup, light creation, descriptor heap management, shader/input layout compilation, geometry/material creation, PSO construction, frame resource allocation, custom mesh import, render-item setup, shadow-map drawing, and draw helpers.
-- **Render Resources:** Tracks frame resources (`FrameResource` objects), textures (`Texture` map), geometries (`MeshGeometry` map), materials, shaders, PSOs, descriptor heaps (SRV/CBV/UAV, RTV, DSV, ImGui), shadow-map resource state, G-buffer RTV/DSV handles, scene texture RTV/SRV handles, particle buffers, and post-process constant buffer.
-- **Lighting & Shadows:** Manages a vector of `Light` structs describing ambient, point, directional, and spot lights (with shadow metadata). Shadow pass root signature and PSO render depth-only geometry per shadow-casting light.
-- **Pipeline State Objects:** Distinct PSOs drive geometry, lighting (volume & full-screen quad), debug light shapes, shadow map, post-process, and particles (graphics + compute). Static samplers cover point/linear wrap/clamp, anisotropic, and border comparison usage.
-- **Descriptor Strategy:** SRV heap packs texture SRVs, G-buffer SRVs, shadow map SRVs, scene tex SRV, particle SRV/UAV. RTV heap extends past swap-chain buffers for G-buffer and scene RTs. Separate heap maintains shadow-map DSVs.
-- **Input Handling:** Mouse drag orbits camera unless ImGui captures input; keyboard WASDQE moves camera, Shift toggles speed boost, mouse wheel changes speed.
-- **Particle System:** Structured buffers and compute dispatch update particles; graphics pass renders billboards using dedicated root signatures and PSOs.
-- **Post-Processing:** Full-screen triangle samples the scene texture with a constant buffer controlling chromatic aberration and other screen-space tweaks.
 
-## Supporting Components
-- `FrameResource`: Wraps command allocator plus upload buffers for pass, object, material, light, and shadow constants.
-- `d3dApp/d3dUtil`: Provide windowing, swap-chain, command queue/list management, shader compilation, buffer helpers, and math utilities.
-- ImGui integration (`imgui_impl_dx12`, `imgui_impl_win32`): Initializes descriptor heap, configures IO flags, and renders UI draw data at the end of the frame.
-- Texture loading uses DirectXTex-based `CreateDDSTextureFromFile12`; geometry import leverages Assimp to build multi-draw meshes (e.g., Sponza) and assign materials.
+- **Globals**: Declares a shared `Camera`, frame-count constants, and the `RenderItem` struct describing per-object transforms, material bindings, and draw ranges.
+- **Lifecycle Overrides**: Implements `Initialize`, `OnResize`, `Update`, `Draw`, `DeferredDraw`, and mouse/keyboard handlers from `D3DApp`, wiring the frame loop to Direct3D resources.
+- **Initialization Helpers**: `LoadAllTextures`, `BuildRootSignature`, `BuildLightingRootSignature`, `BuildShadowPassRootSignature`, `BuildDescriptorHeaps`, `BuildShadersAndInputLayout`, `BuildPSOs`, `BuildFrameResources`.
+- **Scene Construction**: `BuildShapeGeometry`, `BuildCustomMeshGeometry`, `RenderCustomMesh`, `BuildMaterials`, `BuildRenderItems`, and `SetLightShapes` populate meshes, materials, and render queues.
+- **Frame Update Path**: `UpdateCamera`, `AnimateMaterials`, `UpdateObjectCBs`, `UpdateMaterialCBs`, `UpdateLightCBs`, and `UpdateMainPassCB` refresh constant buffers and shadow transforms per frame.
+- **Rendering Passes**: `DrawSceneToShadowMap`, `DrawRenderItems`, and the body of `Draw`/`DeferredDraw` record command lists for G-buffer, lighting, and ImGui composition.
+- **Post Processing**: `CreateSceneTexture`, `BuildScreenQuadGeometry`, and `mPostProcessRootSignature` enable full-screen effects with configurable distortion parameters.
+- **Lighting Utilities**: `BuildLights`, `CreatePointLight`, `CreateSpotLight`, `CreateGBuffer`, and G-buffer members handle light definitions, shadow maps, and descriptor placement.
 
-## Include Inventory (Complete)
-The following directives appear across the template. They are grouped for readability but remain exhaustive.
+## Baseline Variant Highlights
 
-### Relative Includes
-- `#include "../../Common/Camera.h"`
-- `#include "../../Common/GeometryGenerator.h"`
-- `#include "../../Common/MathHelper.h"`
-- `#include "../../Common/UploadBuffer.h"`
-- `#include "../../Common/d3dApp.h"`
-- `#include "../../Common/d3dUtil.h"`
-- `#include "./Compiler/poppack1.h"`
-- `#include "./Compiler/pushpack1.h"`
-- `#include "BaseImporter.h"`
-- `#include "Camera.h"`
-- `#include "Compiler/pstdint.h"`
-- `#include "DDSTextureLoader.h"`
-- `#include "DirectXMath.h"`
-- `#include "Exceptional.h"`
-- `#include "FrameResource.h"`
-- `#include "GameTimer.h"`
-- `#include "GeometryGenerator.h"`
-- `#include "IOStream.hpp"`
-- `#include "LightingUtil.hlsl"`
-- `#include "LogStream.hpp"`
-- `#include "Logger.hpp"`
-- `#include "MathFunctions.h"`
-- `#include "MathHelper.h"`
-- `#include "NullLogger.hpp"`
-- `#include "SmoothingGroups.inl"`
-- `#include "StringComparison.h"`
-- `#include "cexport.h"`
-- `#include "color4.inl"`
-- `#include "d3d12.h"`
-- `#include "d3dApp.h"`
-- `#include "d3dUtil.h"`
-- `#include "d3dx12.h"`
-- `#include "defs.h"`
-- `#include "imconfig.h"`
-- `#include "imgui.h"`
-- `#include "imgui.h" // IMGUI_IMPL_API`
-- `#include "imgui_impl_dx12.h"`
-- `#include "imgui_impl_win32.h"`
-- `#include "imgui_internal.h"`
-- `#include "imgui_user.h"`
-- `#include "imgui_user.inl"`
-- `#include "imstb_rectpack.h"`
-- `#include "imstb_textedit.h"`
-- `#include "imstb_truetype.h"`
-- `#include "material.inl"`
-- `#include "matrix3x3.h"`
-- `#include "matrix3x3.inl"`
-- `#include "matrix4x4.h"`
-- `#include "matrix4x4.inl"`
-- `#include "misc/freetype/imgui_freetype.h"`
-- `#include "model.h"`
-- `#include "quaternion.h"`
-- `#include "quaternion.inl"`
-- `#include "stb_sprintf.h"`
-- `#include "stb_truetype.h"`
-- `#include "types.h"`
-- `#include "vector2.inl"`
-- `#include "vector3.inl"`
+- `TexColumnsApp` and its support files were renamed to `BaselineApp`, `BaselineFrameResource`, `Baseline.vcxproj`, and `Baseline.sln` to clarify the starter project's role.
+- The Visual Studio project targets the 10.0.26100.0 Windows SDK with the `v143` toolset for compatibility with Visual Studio 2026 Community.
+- `BaselineApp::BuildMaterials` defines four tinted materials (`plane_red`, `plane_green`, `plane_blue`, `plane_yellow`) that share the 1×1 white texture but differ in diffuse albedo.
+- `BaselineApp::BuildRenderItems` now instantiates four tiled grid quads, positioning them in a 2×2 layout so the ground plane displays distinct colors per tile.
+- All camera movement, deferred shading passes, lighting, ImGui integration, and root-signature/shader infrastructure from the template are preserved for future extensions.
 
-### Platform, DirectX, and Standard Library Headers
-- `#include <Carbon/Carbon.h> // Use old API to avoid need for separate .mm file`
-- `#include <D3Dcompiler.h>`
-- `#include <DirectXCollision.h>`
-- `#include <DirectXColors.h>`
-- `#include <DirectXMath.h>`
-- `#include <DirectXPackedVector.h>`
-- `#include <TargetConditionals.h>`
-- `#include <Windows.h>`
-- `#include <Windows.h> // _wfopen, OpenClipboard`
-- `#include <WindowsX.h>`
-- `#include <algorithm>`
-- `#include <android/asset_manager.h>`
-- `#include <android/asset_manager_jni.h>`
-- `#include <android/native_activity.h>`
-- `#include <array>`
-- `#include <assert.h>`
-- `#include <cassert>`
-- `#include <cctype>`
-- `#include <chrono>`
-- `#include <cmath>`
-- `#include <comdef.h>`
-- `#include <crtdbg.h>`
-- `#include <cstdarg>`
-- `#include <cstddef>`
-- `#include <cstdint>`
-- `#include <cstdio>`
-- `#include <cstdlib>`
-- `#include <cstring>`
-- `#include <d3d11_1.h>`
-- `#include <d3d12.h>`
-- `#include <d3d12.h> // D3D12_CPU_DESCRIPTOR_HANDLE`
-- `#include <d3dcompiler.h>`
-- `#include <dwmapi.h>`
-- `#include <dxgi1_4.h>`
-- `#include <dxgiformat.h> // DXGI_FORMAT`
-- `#include <exception>`
-- `#include <filesystem>`
-- `#include <float.h>`
-- `#include <float.h> // FLT_MIN, FLT_MAX`
-- `#include <fstream>`
-- `#include <functional>`
-- `#include <imm.h>`
-- `#include <immintrin.h>`
-- `#include <iomanip>`
-- `#include <iostream>`
-- `#include <limits>`
-- `#include <limits.h>`
-- `#include <limits.h> // INT_MIN, INT_MAX`
-- `#include <list>`
-- `#include <locale>`
-- `#include <map>`
-- `#include <math.h>`
-- `#include <math.h> // sqrtf, fabsf, fmodf, powf, floorf, ceilf, cosf, sinf`
-- `#include <memory>`
-- `#include <new> // for std::nothrow_t`
-- `#include <nmmintrin.h>`
-- `#include <pugixml.hpp>`
-- `#include <set>`
-- `#include <shellapi.h> // ShellExecuteA()`
-- `#include <signal.h>`
-- `#include <sstream>`
-- `#include <stdarg.h> // va_list, va_start, va_end`
-- `#include <stddef.h>`
-- `#include <stddef.h> // ptrdiff_t, NULL`
-- `#include <stdexcept>`
-- `#include <stdint.h>`
-- `#include <stdint.h> // intptr_t`
-- `#include <stdio.h>`
-- `#include <stdio.h> // FILE*, sscanf`
-- `#include <stdio.h> // vsnprintf, sscanf, printf`
-- `#include <stdlib.h>`
-- `#include <stdlib.h> // NULL, malloc, free, qsort, atoi, atof`
-- `#include <string>`
-- `#include <string> // for aiString::Set(const std::string&)`
-- `#include <string.h>`
-- `#include <string.h> // memset, memmove, memcpy, strlen, strchr, strcpy, strcmp`
-- `#include <sys/inttypes.h>`
-- `#include <sys/types.h>`
-- `#include <sys/wait.h>`
-- `#include <tchar.h>`
-- `#include <unistd.h>`
-- `#include <unordered_map>`
-- `#include <unordered_set>`
-- `#include <utility>`
-- `#include <vector>`
-- `#include <windows.h>`
-- `#include <windowsx.h> // GET_X_LPARAM(), GET_Y_LPARAM()`
-- `#include <wrl.h>`
-- `#include <xinput.h>`
-- `#include <zlib.h>`
-
-### Assimp Headers
-- `#include <assimp/ByteSwapper.h>`
-- `#include <assimp/DefaultIOStream.h>`
-- `#include <assimp/DefaultIOSystem.h>`
-- `#include <assimp/DefaultLogger.hpp>`
-- `#include <assimp/Exceptional.h>`
-- `#include <assimp/GltfMaterial.h>`
-- `#include <assimp/Hash.h>`
-- `#include <assimp/IOStream.hpp>`
-- `#include <assimp/IOSystem.hpp>`
-- `#include <assimp/Importer.hpp>`
-- `#include <assimp/ParsingUtils.h>`
-- `#include <assimp/ProgressHandler.hpp>`
-- `#include <assimp/SGSpatialSort.h>`
-- `#include <assimp/StreamReader.h>`
-- `#include <assimp/StringComparison.h>`
-- `#include <assimp/StringUtils.h>`
-- `#include <assimp/TinyFormatter.h>`
-- `#include <assimp/aabb.h>`
-- `#include <assimp/ai_assert.h>`
-- `#include <assimp/anim.h>`
-- `#include <assimp/camera.h>`
-- `#include <assimp/cexport.h>`
-- `#include <assimp/color4.h>`
-- `#include <assimp/config.h>`
-- `#include <assimp/defs.h>`
-- `#include <assimp/importerdesc.h>`
-- `#include <assimp/light.h>`
-- `#include <assimp/material.h>`
-- `#include <assimp/matrix3x3.h>`
-- `#include <assimp/matrix4x4.h>`
-- `#include <assimp/mesh.h>`
-- `#include <assimp/metadata.h>`
-- `#include <assimp/postprocess.h>`
-- `#include <assimp/quaternion.h>`
-- `#include <assimp/scene.h>`
-- `#include <assimp/texture.h>`
-- `#include <assimp/types.h>`
-- `#include <assimp/vector2.h>`
-- `#include <assimp/vector3.h>`
-
-### Macro-Based Includes
-- `#include IMGUI_STB_RECT_PACK_FILENAME`
-- `#include IMGUI_STB_SPRINTF_FILENAME`
-- `#include IMGUI_STB_TRUETYPE_FILENAME`
-- `#include IMGUI_USER_CONFIG`
-- `#include IMGUI_USER_H_FILENAME`
-
-This document captures the complete rendering architecture of the template and enumerates every header dependency so the baseline project can mirror the same framework surface while starting from a clean render scene.
