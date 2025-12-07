@@ -1,5 +1,5 @@
 //***************************************************************************************
-// Simplified BaselineApp - Rotating Rainbow Pyramid
+// Simplified BaselineApp - Rotating Rainbow Cube
 //***************************************************************************************
 #include "../../Common/d3dApp.h"
 #include "../../Common/MathHelper.h"
@@ -17,7 +17,7 @@ using namespace DirectX::PackedVector;
 
 const int gNumFrameResources = 3;
 
-// Simple render item for the pyramid
+// Simple render item for the cube
 struct RenderItem
 {
     RenderItem() = default;
@@ -51,7 +51,7 @@ private:
 
     void BuildRootSignature();
     void BuildShadersAndInputLayout();
-    void BuildPyramidGeometry();
+    void BuildCubeGeometry();
     void BuildPSOs();
     void BuildFrameResources();
     void BuildRenderItems();
@@ -71,12 +71,12 @@ private:
     std::vector<D3D12_INPUT_ELEMENT_DESC> mInputLayout;
 
     std::vector<std::unique_ptr<RenderItem>> mAllRitems;
-    RenderItem* mPyramidRitem = nullptr;
+    RenderItem* mCubeRitem = nullptr;
 
     XMFLOAT4X4 mView = MathHelper::Identity4x4();
     XMFLOAT4X4 mProj = MathHelper::Identity4x4();
 
-    float mPyramidRotation = 0.0f;
+    float mCubeRotation = 0.0f;
 };
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
@@ -122,7 +122,7 @@ bool BaselineApp::Initialize()
 
     BuildRootSignature();
     BuildShadersAndInputLayout();
-    BuildPyramidGeometry();
+    BuildCubeGeometry();
     BuildRenderItems();
     BuildPSOs();
     BuildFrameResources();
@@ -148,10 +148,10 @@ void BaselineApp::OnResize()
 
 void BaselineApp::Update(const GameTimer& gt)
 {
-    // Rotate the pyramid
-    mPyramidRotation += 1.0f * gt.DeltaTime();
-    if(mPyramidRotation > XM_2PI)
-        mPyramidRotation -= XM_2PI;
+    // Rotate the cube
+    mCubeRotation += 1.0f * gt.DeltaTime();
+    if(mCubeRotation > XM_2PI)
+        mCubeRotation -= XM_2PI;
 
     mCurrFrameResourceIndex = (mCurrFrameResourceIndex + 1) % gNumFrameResources;
     mCurrFrameResource = mFrameResources[mCurrFrameResourceIndex].get();
@@ -239,52 +239,88 @@ void BaselineApp::BuildRootSignature()
 
 void BaselineApp::BuildShadersAndInputLayout()
 {
-    mShaders["pyramidVS"] = d3dUtil::CompileShader(L"Shaders\\Pyramid.hlsl", nullptr, "VS", "vs_5_1");
-    mShaders["pyramidPS"] = d3dUtil::CompileShader(L"Shaders\\Pyramid.hlsl", nullptr, "PS", "ps_5_1");
+    mShaders["cubeVS"] = d3dUtil::CompileShader(L"Shaders\\Pyramid.hlsl", nullptr, "VS", "vs_5_1");
+    mShaders["cubePS"] = d3dUtil::CompileShader(L"Shaders\\Pyramid.hlsl", nullptr, "PS", "ps_5_1");
 
     mInputLayout =
     {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 28, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
     };
 }
 
-void BaselineApp::BuildPyramidGeometry()
+void BaselineApp::BuildCubeGeometry()
 {
-    // Create a pyramid with rainbow colors
-    // Base: square at y = -0.5
-    // Apex: point at y = 0.5
-    std::array<Vertex, 5> vertices =
+    // Create a cube with rainbow colors and correct normals
+    // Cube centered at origin with size 2 (from -1 to +1 on each axis)
+    // Each face has 4 vertices with appropriate normals pointing outward
+    std::array<Vertex, 24> vertices =
     {
-        // Base vertices (square)
-        Vertex(XMFLOAT3(-1.0f, -0.5f, -1.0f), XMFLOAT4(1.0f, 0.0f, 0.0f, 1.0f)), // Red
-        Vertex(XMFLOAT3( 1.0f, -0.5f, -1.0f), XMFLOAT4(1.0f, 0.5f, 0.0f, 1.0f)), // Orange
-        Vertex(XMFLOAT3( 1.0f, -0.5f,  1.0f), XMFLOAT4(1.0f, 1.0f, 0.0f, 1.0f)), // Yellow
-        Vertex(XMFLOAT3(-1.0f, -0.5f,  1.0f), XMFLOAT4(0.0f, 1.0f, 0.0f, 1.0f)), // Green
-        // Apex
-        Vertex(XMFLOAT3( 0.0f,  0.5f,  0.0f), XMFLOAT4(0.0f, 0.0f, 1.0f, 1.0f)), // Blue
+        // Front face (Z = +1) - Normal pointing +Z
+        Vertex(XMFLOAT3(-1.0f, -1.0f,  1.0f), XMFLOAT4(1.0f, 0.0f, 0.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, 1.0f)), // Red
+        Vertex(XMFLOAT3( 1.0f, -1.0f,  1.0f), XMFLOAT4(1.0f, 0.5f, 0.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, 1.0f)), // Orange
+        Vertex(XMFLOAT3( 1.0f,  1.0f,  1.0f), XMFLOAT4(1.0f, 1.0f, 0.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, 1.0f)), // Yellow
+        Vertex(XMFLOAT3(-1.0f,  1.0f,  1.0f), XMFLOAT4(0.0f, 1.0f, 0.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, 1.0f)), // Green
+
+        // Back face (Z = -1) - Normal pointing -Z
+        Vertex(XMFLOAT3( 1.0f, -1.0f, -1.0f), XMFLOAT4(0.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, -1.0f)), // Cyan
+        Vertex(XMFLOAT3(-1.0f, -1.0f, -1.0f), XMFLOAT4(0.0f, 0.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, -1.0f)), // Blue
+        Vertex(XMFLOAT3(-1.0f,  1.0f, -1.0f), XMFLOAT4(0.5f, 0.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, -1.0f)), // Purple
+        Vertex(XMFLOAT3( 1.0f,  1.0f, -1.0f), XMFLOAT4(1.0f, 0.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, -1.0f)), // Magenta
+
+        // Top face (Y = +1) - Normal pointing +Y
+        Vertex(XMFLOAT3(-1.0f,  1.0f,  1.0f), XMFLOAT4(0.0f, 1.0f, 0.0f, 1.0f), XMFLOAT3(0.0f, 1.0f, 0.0f)), // Green
+        Vertex(XMFLOAT3( 1.0f,  1.0f,  1.0f), XMFLOAT4(1.0f, 1.0f, 0.0f, 1.0f), XMFLOAT3(0.0f, 1.0f, 0.0f)), // Yellow
+        Vertex(XMFLOAT3( 1.0f,  1.0f, -1.0f), XMFLOAT4(1.0f, 0.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, 1.0f, 0.0f)), // Magenta
+        Vertex(XMFLOAT3(-1.0f,  1.0f, -1.0f), XMFLOAT4(0.5f, 0.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, 1.0f, 0.0f)), // Purple
+
+        // Bottom face (Y = -1) - Normal pointing -Y
+        Vertex(XMFLOAT3(-1.0f, -1.0f, -1.0f), XMFLOAT4(0.0f, 0.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, -1.0f, 0.0f)), // Blue
+        Vertex(XMFLOAT3( 1.0f, -1.0f, -1.0f), XMFLOAT4(0.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, -1.0f, 0.0f)), // Cyan
+        Vertex(XMFLOAT3( 1.0f, -1.0f,  1.0f), XMFLOAT4(1.0f, 0.5f, 0.0f, 1.0f), XMFLOAT3(0.0f, -1.0f, 0.0f)), // Orange
+        Vertex(XMFLOAT3(-1.0f, -1.0f,  1.0f), XMFLOAT4(1.0f, 0.0f, 0.0f, 1.0f), XMFLOAT3(0.0f, -1.0f, 0.0f)), // Red
+
+        // Right face (X = +1) - Normal pointing +X
+        Vertex(XMFLOAT3( 1.0f, -1.0f,  1.0f), XMFLOAT4(1.0f, 0.5f, 0.0f, 1.0f), XMFLOAT3(1.0f, 0.0f, 0.0f)), // Orange
+        Vertex(XMFLOAT3( 1.0f, -1.0f, -1.0f), XMFLOAT4(0.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(1.0f, 0.0f, 0.0f)), // Cyan
+        Vertex(XMFLOAT3( 1.0f,  1.0f, -1.0f), XMFLOAT4(1.0f, 0.0f, 1.0f, 1.0f), XMFLOAT3(1.0f, 0.0f, 0.0f)), // Magenta
+        Vertex(XMFLOAT3( 1.0f,  1.0f,  1.0f), XMFLOAT4(1.0f, 1.0f, 0.0f, 1.0f), XMFLOAT3(1.0f, 0.0f, 0.0f)), // Yellow
+
+        // Left face (X = -1) - Normal pointing -X
+        Vertex(XMFLOAT3(-1.0f, -1.0f, -1.0f), XMFLOAT4(0.0f, 0.0f, 1.0f, 1.0f), XMFLOAT3(-1.0f, 0.0f, 0.0f)), // Blue
+        Vertex(XMFLOAT3(-1.0f, -1.0f,  1.0f), XMFLOAT4(1.0f, 0.0f, 0.0f, 1.0f), XMFLOAT3(-1.0f, 0.0f, 0.0f)), // Red
+        Vertex(XMFLOAT3(-1.0f,  1.0f,  1.0f), XMFLOAT4(0.0f, 1.0f, 0.0f, 1.0f), XMFLOAT3(-1.0f, 0.0f, 0.0f)), // Green
+        Vertex(XMFLOAT3(-1.0f,  1.0f, -1.0f), XMFLOAT4(0.5f, 0.0f, 1.0f, 1.0f), XMFLOAT3(-1.0f, 0.0f, 0.0f)), // Purple
     };
 
-    std::array<std::uint16_t, 18> indices =
+    std::array<std::uint16_t, 36> indices =
     {
-        // Base (2 triangles)
-        0, 1, 2,
-        0, 2, 3,
-        // Side 1 (red to orange)
-        0, 1, 4,
-        // Side 2 (orange to yellow)
-        1, 2, 4,
-        // Side 3 (yellow to green)
-        2, 3, 4,
-        // Side 4 (green to red)
-        3, 0, 4,
+        // Front face (Z = +1) - counter-clockwise when viewed from +Z
+        0,  1,  2,
+        0,  2,  3,
+        // Back face (Z = -1) - counter-clockwise when viewed from -Z  
+        4,  7,  6,
+        4,  6,  5,
+        // Top face (Y = +1) - counter-clockwise when viewed from +Y
+        8,  9,  10,
+        8,  10, 11,
+        // Bottom face (Y = -1) - counter-clockwise when viewed from -Y
+        12, 13, 14,
+        12, 14, 15,
+        // Right face (X = +1) - counter-clockwise when viewed from +X
+        16, 17, 18,
+        16, 18, 19,
+        // Left face (X = -1) - counter-clockwise when viewed from -X
+        20, 21, 22,
+        20, 22, 23,
     };
 
     const UINT vbByteSize = (UINT)vertices.size() * sizeof(Vertex);
     const UINT ibByteSize = (UINT)indices.size() * sizeof(std::uint16_t);
 
     auto geo = std::make_unique<MeshGeometry>();
-    geo->Name = "pyramidGeo";
+    geo->Name = "cubeGeo";
 
     ThrowIfFailed(D3DCreateBlob(vbByteSize, &geo->VertexBufferCPU));
     CopyMemory(geo->VertexBufferCPU->GetBufferPointer(), vertices.data(), vbByteSize);
@@ -308,7 +344,7 @@ void BaselineApp::BuildPyramidGeometry()
     submesh.StartIndexLocation = 0;
     submesh.BaseVertexLocation = 0;
 
-    geo->DrawArgs["pyramid"] = submesh;
+    geo->DrawArgs["cube"] = submesh;
 
     mGeometries[geo->Name] = std::move(geo);
 }
@@ -321,13 +357,13 @@ void BaselineApp::BuildPSOs()
     psoDesc.pRootSignature = mRootSignature.Get();
     psoDesc.VS = 
     { 
-        reinterpret_cast<BYTE*>(mShaders["pyramidVS"]->GetBufferPointer()), 
-        mShaders["pyramidVS"]->GetBufferSize()
+        reinterpret_cast<BYTE*>(mShaders["cubeVS"]->GetBufferPointer()), 
+        mShaders["cubeVS"]->GetBufferSize()
     };
     psoDesc.PS = 
     { 
-        reinterpret_cast<BYTE*>(mShaders["pyramidPS"]->GetBufferPointer()),
-        mShaders["pyramidPS"]->GetBufferSize()
+        reinterpret_cast<BYTE*>(mShaders["cubePS"]->GetBufferPointer()),
+        mShaders["cubePS"]->GetBufferSize()
     };
     psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
     psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
@@ -353,24 +389,24 @@ void BaselineApp::BuildFrameResources()
 
 void BaselineApp::BuildRenderItems()
 {
-    auto pyramidRitem = std::make_unique<RenderItem>();
-    pyramidRitem->World = MathHelper::Identity4x4();
-    pyramidRitem->ObjCBIndex = 0;
-    pyramidRitem->Geo = mGeometries["pyramidGeo"].get();
-    pyramidRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-    pyramidRitem->IndexCount = pyramidRitem->Geo->DrawArgs["pyramid"].IndexCount;
-    pyramidRitem->StartIndexLocation = pyramidRitem->Geo->DrawArgs["pyramid"].StartIndexLocation;
-    pyramidRitem->BaseVertexLocation = pyramidRitem->Geo->DrawArgs["pyramid"].BaseVertexLocation;
-    mPyramidRitem = pyramidRitem.get();
-    mAllRitems.push_back(std::move(pyramidRitem));
+    auto cubeRitem = std::make_unique<RenderItem>();
+    cubeRitem->World = MathHelper::Identity4x4();
+    cubeRitem->ObjCBIndex = 0;
+    cubeRitem->Geo = mGeometries["cubeGeo"].get();
+    cubeRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+    cubeRitem->IndexCount = cubeRitem->Geo->DrawArgs["cube"].IndexCount;
+    cubeRitem->StartIndexLocation = cubeRitem->Geo->DrawArgs["cube"].StartIndexLocation;
+    cubeRitem->BaseVertexLocation = cubeRitem->Geo->DrawArgs["cube"].BaseVertexLocation;
+    mCubeRitem = cubeRitem.get();
+    mAllRitems.push_back(std::move(cubeRitem));
 }
 
 void BaselineApp::UpdateObjectCBs(const GameTimer& gt)
 {
     auto currObjectCB = mCurrFrameResource->ObjectCB.get();
     
-    // Update pyramid rotation
-    XMMATRIX world = XMMatrixRotationY(mPyramidRotation);
+    // Update cube rotation
+    XMMATRIX world = XMMatrixRotationY(mCubeRotation);
     XMMATRIX viewProj = XMLoadFloat4x4(&mView) * XMLoadFloat4x4(&mProj);
 
     ObjectConstants objConstants;

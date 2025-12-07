@@ -17,15 +17,16 @@ struct PassConstants
     float TotalTime = 0.0f;
 };
 
-// Simple vertex with position and color
+// Simple vertex with position, color, and normal
 struct Vertex
 {
     DirectX::XMFLOAT3 Pos;
     DirectX::XMFLOAT4 Color;
+    DirectX::XMFLOAT3 Normal;
     
     Vertex() {}
-    Vertex(const DirectX::XMFLOAT3& p, const DirectX::XMFLOAT4& c) 
-        : Pos(p), Color(c) {}
+    Vertex(const DirectX::XMFLOAT3& p, const DirectX::XMFLOAT4& c, const DirectX::XMFLOAT3& n) 
+        : Pos(p), Color(c), Normal(n) {}
 };
 
 // Stores the resources needed for the CPU to build the command lists
