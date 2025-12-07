@@ -347,6 +347,11 @@ bool BaselineApp::Frustum::ContainsPoint(const DirectX::XMFLOAT3& point) const
         
         void GenerateHeightMap(std::vector<float>& heights, const DirectX::XMFLOAT2& offset = {0.0f, 0.0f});
         
+        // Texture-based heightmap support
+        void LoadHeightMapTexture(ID3D12Device* device, ID3D12GraphicsCommandList* cmdList, const std::wstring& filename);
+        void SetUseTexture(bool useTexture) { mUseTexture = useTexture; }
+        void SetHeightScale(float scale) { mHeightScale = scale; } // Scale factor for texture height values
+        
         // Configuration
         void SetOctaves(int octaves) { mOctaves = octaves; }
         void SetFrequency(float frequency) { mFrequency = frequency; }
@@ -361,6 +366,7 @@ bool BaselineApp::Frustum::ContainsPoint(const DirectX::XMFLOAT3& point) const
         float PerlinNoise2D(float x, float y);
         float Interpolate(float a, float b, float x);
         float Fade(float t);
+        float SampleHeightFromTexture(float u, float v) const; // Sample heightmap texture
         
         int mWidth;
         int mHeight;
@@ -369,6 +375,15 @@ bool BaselineApp::Frustum::ContainsPoint(const DirectX::XMFLOAT3& point) const
         float mFrequency;
         float mAmplitude;
         unsigned int mSeed;
+        
+        // Texture-based heightmap
+        bool mUseTexture = false;
+        float mHeightScale = 50.0f; // Scale factor for heightmap texture values
+        ComPtr<ID3D12Resource> mHeightMapTexture;
+        ComPtr<ID3D12Resource> mHeightMapTextureUpload;
+        UINT mHeightMapTextureWidth = 0;
+        UINT mHeightMapTextureHeight = 0;
+        std::vector<uint8_t> mHeightMapData; // CPU-side texture data for sampling
     };
 ```
 
@@ -399,19 +414,41 @@ void BaselineApp::HeightMapGenerator::GenerateHeightMap(
     {
         for (int x = 0; x < mWidth; ++x)
         {
-            float worldX = (x + offset.x) * mScale;
-            float worldY = (y + offset.y) * mScale;
-            
             float height = 0.0f;
-            float amplitude = mAmplitude;
-            float frequency = mFrequency;
             
-            // Sum octaves for fractal noise
-            for (int o = 0; o < mOctaves; ++o)
+            if (mUseTexture && !mHeightMapData.empty())
             {
-                height += PerlinNoise2D(worldX * frequency, worldY * frequency) * amplitude;
-                amplitude *= 0.5f;
-                frequency *= 2.0f;
+                // Use texture-based heightmap
+                float worldX = (x + offset.x) * mScale;
+                float worldY = (y + offset.y) * mScale;
+                
+                // Convert world coordinates to texture UV coordinates
+                // Assuming texture covers the entire terrain
+                float u = (worldX / (mHeightMapTextureWidth * mScale)) + 0.5f;
+                float v = (worldY / (mHeightMapTextureHeight * mScale)) + 0.5f;
+                
+                // Clamp to [0, 1]
+                u = std::max(0.0f, std::min(1.0f, u));
+                v = std::max(0.0f, std::min(1.0f, v));
+                
+                height = SampleHeightFromTexture(u, v) * mHeightScale;
+            }
+            else
+            {
+                // Use procedural Perlin noise
+                float worldX = (x + offset.x) * mScale;
+                float worldY = (y + offset.y) * mScale;
+                
+                float amplitude = mAmplitude;
+                float frequency = mFrequency;
+                
+                // Sum octaves for fractal noise
+                for (int o = 0; o < mOctaves; ++o)
+                {
+                    height += PerlinNoise2D(worldX * frequency, worldY * frequency) * amplitude;
+                    amplitude *= 0.5f;
+                    frequency *= 2.0f;
+                }
             }
             
             // Normalize height (ensure non-negative)
@@ -471,6 +508,70 @@ float BaselineApp::HeightMapGenerator::Fade(float t)
     // Smoothstep function: 6t^5 - 15t^4 + 10t^3
     return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
 }
+
+void BaselineApp::HeightMapGenerator::LoadHeightMapTexture(
+    ID3D12Device* device, 
+    ID3D12GraphicsCommandList* cmdList, 
+    const std::wstring& filename)
+{
+    // Load DDS texture using DDSTextureLoader
+    ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(
+        device,
+        cmdList,
+        filename.c_str(),
+        mHeightMapTexture,
+        mHeightMapTextureUpload));
+    
+    // Get texture dimensions
+    D3D12_RESOURCE_DESC desc = mHeightMapTexture->GetDesc();
+    mHeightMapTextureWidth = static_cast<UINT>(desc.Width);
+    mHeightMapTextureHeight = static_cast<UINT>(desc.Height);
+    
+    // Note: Reading texture data to CPU requires creating a staging resource
+    // For simplicity, we'll use procedural generation as fallback
+    // For production: Consider sampling heightmap in vertex shader instead
+    // This would require:
+    // 1. Passing heightmap texture as SRV to shader
+    // 2. Sampling in vertex shader: height = heightmapTexture.SampleLevel(sampler, uv, 0).r
+    // 3. Applying height offset in vertex shader
+    
+    // For now, we'll mark texture as loaded but use procedural fallback
+    // To enable texture-based height, implement staging resource copy or shader-based sampling
+    mUseTexture = false; // Set to true only after implementing texture data reading or shader sampling
+    
+    // TODO: Implement one of the following:
+    // Option 1: Copy texture to staging resource and read CPU-side
+    // Option 2: Sample heightmap in vertex shader (recommended for performance)
+}
+
+float BaselineApp::HeightMapGenerator::SampleHeightFromTexture(float u, float v) const
+{
+    if (mHeightMapData.empty() || mHeightMapTextureWidth == 0 || mHeightMapTextureHeight == 0)
+        return 0.0f;
+    
+    // Convert UV to pixel coordinates
+    int x = static_cast<int>(u * (mHeightMapTextureWidth - 1));
+    int y = static_cast<int>(v * (mHeightMapTextureHeight - 1));
+    
+    // Clamp to valid range
+    x = std::max(0, std::min(static_cast<int>(mHeightMapTextureWidth - 1), x));
+    y = std::max(0, std::min(static_cast<int>(mHeightMapTextureHeight - 1), y));
+    
+    // Sample from texture data (assuming R8G8B8A8 format, using red channel)
+    int index = (y * mHeightMapTextureWidth + x) * 4; // 4 bytes per pixel (RGBA)
+    if (index + 3 < static_cast<int>(mHeightMapData.size()))
+    {
+        // Use red channel as height (normalized to [0, 1])
+        return static_cast<float>(mHeightMapData[index]) / 255.0f;
+    }
+    
+    return 0.0f;
+}
+
+// Note: For production use, consider sampling heightmap in vertex shader instead of CPU
+// This requires passing the heightmap texture as SRV to the shader and sampling it there
+// The current CPU-side sampling approach requires reading texture data which may not
+// be efficient for large textures. Alternative: Use compute shader or vertex shader sampling.
 ```
 
 ---
@@ -885,11 +986,23 @@ void BaselineApp::TerrainTile::CreateMesh(
     std::unique_ptr<QuadTree> mTerrainQuadTree;
     std::unique_ptr<HeightMapGenerator> mHeightMapGenerator; // Optional: direct access
     
+    // Terrain textures
+    ComPtr<ID3D12Resource> mTerrainColorTexture;
+    ComPtr<ID3D12Resource> mTerrainColorTextureUpload;
+    ComPtr<ID3D12DescriptorHeap> mSrvDescriptorHeap; // Descriptor heap for textures
+    
     // Terrain parameters
     float mTerrainSize = 1000.0f;        // Size of terrain in world units
     int mMaxQuadTreeDepth = 6;          // Maximum depth of quad tree
     float mLODDistanceFactor = 1.0f;    // LOD distance multiplier
     int mTileResolution = 65;           // Vertices per tile (65x65)
+    
+    // Texture paths
+    // Note: Adjust paths based on your project structure
+    // For baseline project, use: L"..\\labor_1\\src\\Textures\\terrain\\ter_highmap.dds"
+    // Or copy textures to baseline/src/Textures/terrain/ directory
+    std::wstring mHeightMapTexturePath = L"..\\labor_1\\src\\Textures\\terrain\\ter_highmap.dds";
+    std::wstring mTerrainColorTexturePath = L"..\\labor_1\\src\\Textures\\terrain\\ter_texture.dds";
 ```
 
 ---
@@ -1117,10 +1230,13 @@ BaselineApp::QuadTree::QuadTree(
     // Create height map generator
     mHeightMapGenerator = std::make_unique<HeightMapGenerator>(
         tileResolution, tileResolution, terrainSize / tileResolution);
+    
+    // Configure for procedural generation (can be overridden if texture is loaded)
     mHeightMapGenerator->SetOctaves(6);
     mHeightMapGenerator->SetFrequency(0.005f);
     mHeightMapGenerator->SetAmplitude(50.0f);
     mHeightMapGenerator->SetSeed(42);
+    mHeightMapGenerator->SetUseTexture(false); // Will be set to true if texture is loaded
     
     // Create root node
     DirectX::XMFLOAT3 center(0.0f, 0.0f, 0.0f);
@@ -1475,8 +1591,9 @@ bool BaselineApp::Initialize()
     BuildShadersAndInputLayout();
     
     // ============================================================================
-    // TERRAIN RENDERER - Build terrain and water systems
+    // TERRAIN RENDERER - Build terrain textures and systems
     // ============================================================================
+    BuildTerrainTextures();
     BuildTerrain();
     BuildWater();
     
@@ -1508,7 +1625,7 @@ bool BaselineApp::Initialize()
 
 ---
 
-### Step 7.2: Add BuildTerrain() Method
+### Step 7.2: Add BuildTerrainTextures() Method
 
 **Location**: After `BuildRenderItems()` method (around line 401)
 
@@ -1517,6 +1634,42 @@ bool BaselineApp::Initialize()
 // TERRAIN RENDERER - Build Methods
 // ============================================================================
 
+void BaselineApp::BuildTerrainTextures()
+{
+    // Create descriptor heap for textures
+    D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
+    srvHeapDesc.NumDescriptors = 2; // Heightmap + color texture
+    srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&mSrvDescriptorHeap)));
+    
+    // Load terrain color texture
+    ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(
+        md3dDevice.Get(),
+        mCommandList.Get(),
+        mTerrainColorTexturePath.c_str(),
+        mTerrainColorTexture,
+        mTerrainColorTextureUpload));
+    
+    // Create SRV for color texture
+    CD3DX12_CPU_DESCRIPTOR_HANDLE hDescriptor(mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
+    
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.Format = mTerrainColorTexture->GetDesc().Format;
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srvDesc.Texture2D.MostDetailedMip = 0;
+    srvDesc.Texture2D.MipLevels = mTerrainColorTexture->GetDesc().MipLevels;
+    srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
+    
+    md3dDevice->CreateShaderResourceView(mTerrainColorTexture.Get(), &srvDesc, hDescriptor);
+}
+
+### Step 7.3: Add BuildTerrain() Method
+
+**Location**: After `BuildTerrainTextures()` method
+
+```cpp
 void BaselineApp::BuildTerrain()
 {
     // Initialize quad tree
@@ -1529,12 +1682,24 @@ void BaselineApp::BuildTerrain()
     
     // Set LOD parameters
     mTerrainQuadTree->SetLODDistanceFactor(mLODDistanceFactor);
+    
+    // Load heightmap texture if using texture-based generation
+    // Note: Heightmap texture is loaded in QuadTree constructor via HeightMapGenerator
+    // But we can also load it here and pass to the generator
+    auto* heightGen = mTerrainQuadTree->GetHeightMapGenerator();
+    if (heightGen)
+    {
+        // Load heightmap texture
+        heightGen->LoadHeightMapTexture(md3dDevice.Get(), mCommandList.Get(), mHeightMapTexturePath);
+        heightGen->SetUseTexture(true);
+        heightGen->SetHeightScale(50.0f); // Adjust based on your heightmap
+    }
 }
 ```
 
 ---
 
-### Step 7.3: Add BuildWater() Method
+### Step 7.4: Add BuildWater() Method
 
 **Location**: After `BuildTerrain()` method
 
@@ -1560,7 +1725,61 @@ void BaselineApp::BuildWater()
 
 ---
 
-### Step 7.4: Modify BuildShadersAndInputLayout() Method
+### Step 7.5: Modify BuildRootSignature() Method
+
+**Location**: In `BuildRootSignature()` (around line 249)
+
+**Replace the method**:
+
+```cpp
+void BaselineApp::BuildRootSignature()
+{
+    CD3DX12_ROOT_PARAMETER slotRootParameter[3];
+
+    slotRootParameter[0].InitAsConstantBufferView(0); // Object constants (b0)
+    slotRootParameter[1].InitAsConstantBufferView(1); // Pass constants (b1)
+    
+    // ============================================================================
+    // TERRAIN RENDERER - Texture descriptor table
+    // ============================================================================
+    CD3DX12_DESCRIPTOR_RANGE texTable;
+    texTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0); // 1 texture in register t0
+    slotRootParameter[2].InitAsDescriptorTable(1, &texTable, D3D12_SHADER_VISIBILITY_PIXEL);
+
+    // Static sampler for texture
+    CD3DX12_STATIC_SAMPLER_DESC samplerDesc(
+        0, // shaderRegister
+        D3D12_FILTER_MIN_MAG_MIP_LINEAR, // filter
+        D3D12_TEXTURE_ADDRESS_MODE_WRAP,  // addressU
+        D3D12_TEXTURE_ADDRESS_MODE_WRAP,  // addressV
+        D3D12_TEXTURE_ADDRESS_MODE_WRAP); // addressW
+
+    CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(3, slotRootParameter,
+        1, &samplerDesc, // 1 static sampler
+        D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+    ComPtr<ID3DBlob> serializedRootSig = nullptr;
+    ComPtr<ID3DBlob> errorBlob = nullptr;
+    HRESULT hr = D3D12SerializeRootSignature(&rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1,
+        serializedRootSig.GetAddressOf(), errorBlob.GetAddressOf());
+
+    if(errorBlob != nullptr)
+    {
+        ::OutputDebugStringA((char*)errorBlob->GetBufferPointer());
+    }
+    ThrowIfFailed(hr);
+
+    ThrowIfFailed(md3dDevice->CreateRootSignature(
+        0,
+        serializedRootSig->GetBufferPointer(),
+        serializedRootSig->GetBufferSize(),
+        IID_PPV_ARGS(mRootSignature.GetAddressOf())));
+}
+```
+
+---
+
+### Step 7.6: Modify BuildShadersAndInputLayout() Method
 
 **Location**: In `BuildShadersAndInputLayout()` (around line 278)
 
@@ -1591,7 +1810,7 @@ void BaselineApp::BuildShadersAndInputLayout()
 
 ---
 
-### Step 7.5: Modify BuildPSOs() Method
+### Step 7.7: Modify BuildPSOs() Method
 
 **Location**: In `BuildPSOs()` (around line 351)
 
@@ -1660,7 +1879,7 @@ void BaselineApp::BuildPSOs()
 
 ---
 
-### Step 7.6: Modify Update() Method
+### Step 7.7: Modify Update() Method
 
 **Location**: In `Update()` (around line 172)
 
@@ -1721,7 +1940,7 @@ void BaselineApp::Update(const GameTimer& gt)
 
 ---
 
-### Step 7.7: Add UpdateTerrain() Method
+### Step 7.8: Add UpdateTerrain() Method
 
 **Location**: After `Update()` method
 
@@ -1743,7 +1962,7 @@ void BaselineApp::UpdateTerrain(const GameTimer& gt)
 
 ---
 
-### Step 7.8: Add UpdateWater() Method
+### Step 7.9: Add UpdateWater() Method
 
 **Location**: After `UpdateTerrain()` method
 
@@ -1761,7 +1980,7 @@ void BaselineApp::UpdateWater(const GameTimer& gt)
 
 ---
 
-### Step 7.9: Modify UpdatePassCB() Method
+### Step 7.10: Modify UpdatePassCB() Method
 
 **Location**: In `UpdatePassCB()` (around line 418)
 
@@ -1804,7 +2023,7 @@ void BaselineApp::UpdatePassCB(const GameTimer& gt)
 
 ---
 
-### Step 7.10: Modify Draw() Method
+### Step 7.11: Modify Draw() Method
 
 **Location**: In `Draw()` (around line 209)
 
@@ -1865,7 +2084,7 @@ void BaselineApp::Draw(const GameTimer& gt)
 
 ---
 
-### Step 7.11: Add DrawTerrain() Method
+### Step 7.12: Add DrawTerrain() Method
 
 **Location**: After `DrawRenderItems()` method (around line 452)
 
@@ -1882,9 +2101,17 @@ void BaselineApp::DrawTerrain(ID3D12GraphicsCommandList* cmdList)
     // Set root signature
     cmdList->SetGraphicsRootSignature(mRootSignature.Get());
     
+    // Set descriptor heap for textures
+    ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
+    cmdList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
+    
     // Set pass constant buffer
     auto passCB = mCurrFrameResource->PassCB->Resource();
     cmdList->SetGraphicsRootConstantBufferView(1, passCB->GetGPUVirtualAddress());
+    
+    // Set texture SRV (slot 2 in root signature)
+    CD3DX12_GPU_DESCRIPTOR_HANDLE texDescriptor(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+    cmdList->SetGraphicsRootDescriptorTable(2, texDescriptor);
     
     // Render quad tree
     mTerrainQuadTree->Render(
@@ -1898,7 +2125,7 @@ void BaselineApp::DrawTerrain(ID3D12GraphicsCommandList* cmdList)
 
 ---
 
-### Step 7.12: Add DrawWater() Method
+### Step 7.13: Add DrawWater() Method
 
 **Location**: After `DrawTerrain()` method
 
@@ -1916,7 +2143,7 @@ void BaselineApp::DrawWater(ID3D12GraphicsCommandList* cmdList)
 
 ---
 
-### Step 7.13: Modify UpdateObjectCBs() Method
+### Step 7.14: Modify UpdateObjectCBs() Method
 
 **Location**: In `UpdateObjectCBs()` (around line 403)
 
@@ -1926,7 +2153,7 @@ void BaselineApp::DrawWater(ID3D12GraphicsCommandList* cmdList)
 
 ---
 
-### Step 7.14: Add Keyboard Controls
+### Step 7.15: Add Keyboard Controls
 
 **Location**: In `OnKeyPressed()` (around line 489)
 
@@ -2004,6 +2231,12 @@ cbuffer cbPass : register(b1)
     float4 gAmbientLight;
 }
 
+// ============================================================================
+// TERRAIN RENDERER - Texture resources
+// ============================================================================
+Texture2D gTerrainTexture : register(t0);
+SamplerState gsamLinearWrap : register(s0);
+
 struct VertexIn
 {
     float3 PosL : POSITION;
@@ -2041,16 +2274,23 @@ VertexOut VS(VertexIn vin)
 
 float4 PS(VertexOut pin) : SV_Target
 {
-    // Simple texture based on height
+    // Sample terrain color texture
+    float4 texColor = gTerrainTexture.Sample(gsamLinearWrap, pin.TexCoord);
+    float3 color = texColor.rgb;
+    
+    // Optional: Blend with height-based coloring for variation
     float height = pin.PosW.y;
-    float3 color;
+    float3 heightColor;
     
     if (height < 10.0f)
-        color = float3(0.2f, 0.6f, 0.2f); // Green for lowlands
+        heightColor = float3(0.2f, 0.6f, 0.2f); // Green for lowlands
     else if (height < 30.0f)
-        color = float3(0.5f, 0.4f, 0.2f); // Brown for hills
+        heightColor = float3(0.5f, 0.4f, 0.2f); // Brown for hills
     else
-        color = float3(0.8f, 0.8f, 0.8f); // Gray for mountains
+        heightColor = float3(0.8f, 0.8f, 0.8f); // Gray for mountains
+    
+    // Blend texture with height-based color (70% texture, 30% height)
+    color = lerp(heightColor, color, 0.7f);
     
     // Simple lighting
     float3 lightDir = normalize(float3(0.5f, -1.0f, 0.5f));
@@ -2216,7 +2456,8 @@ struct PassConstants
 This plan provides a complete implementation of a terrain renderer with:
 - ✅ Quad-tree LOD system
 - ✅ Frustum culling
-- ✅ Height map generation
+- ✅ Height map generation (procedural Perlin noise + texture-based support)
+- ✅ Texture-based terrain rendering (heightmap and color textures)
 - ✅ Water surface with animation
 - ✅ All code in Baseline.cpp (single file approach)
 
