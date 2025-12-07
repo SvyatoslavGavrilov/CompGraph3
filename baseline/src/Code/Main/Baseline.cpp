@@ -1,9 +1,11 @@
 //***************************************************************************************
-// Simplified BaselineApp - Rotating Rainbow Cube
+// Simplified BaselineApp - Rotating Rainbow Cube with Camera Controls
 //***************************************************************************************
 #include "../../Common/d3dApp.h"
 #include "../../Common/MathHelper.h"
 #include "../../Common/UploadBuffer.h"
+#include "../../Common/GeometryGenerator.h"
+#include "../../Common/Camera.h"
 #include <array>
 #include <string>
 #include "BaselineFrameResource.h"
@@ -48,6 +50,10 @@ private:
     virtual void Update(const GameTimer& gt)override;
     virtual void Draw(const GameTimer& gt)override;
     virtual void DeferredDraw(const GameTimer& gt)override { Draw(gt); }
+    virtual void OnMouseDown(WPARAM btnState, int x, int y)override;
+    virtual void OnMouseUp(WPARAM btnState, int x, int y)override;
+    virtual void OnMouseMove(WPARAM btnState, int x, int y)override;
+    virtual void OnKeyPressed(const GameTimer& gt, WPARAM key)override;
 
     void BuildRootSignature();
     void BuildShadersAndInputLayout();
@@ -77,6 +83,11 @@ private:
     XMFLOAT4X4 mProj = MathHelper::Identity4x4();
 
     float mCubeRotation = 0.0f;
+
+    // Camera
+    Camera mCamera;
+    POINT mLastMousePos;
+    bool mRightMouseDown = false;
 };
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
@@ -127,6 +138,14 @@ bool BaselineApp::Initialize()
     BuildPSOs();
     BuildFrameResources();
 
+    // Initialize camera
+    mCamera.SetPosition(0.0f, 2.0f, -5.0f);
+    mCamera.LookAt(XMVectorSet(0.0f, 2.0f, -5.0f, 0.0f), 
+                   XMVectorSet(0.0f, 0.0f, 0.0f, 0.0f), 
+                   XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
+    mCamera.SetLens(0.25f*MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
+    mCamera.UpdateViewMatrix();
+
     // Execute the initialization commands.
     ThrowIfFailed(mCommandList->Close());
     ID3D12CommandList* cmdsLists[] = { mCommandList.Get() };
@@ -142,7 +161,11 @@ void BaselineApp::OnResize()
     D3DApp::OnResize();
 
     // The window resized, so update the aspect ratio and recompute the projection matrix.
-    XMMATRIX P = XMMatrixPerspectiveFovLH(0.25f*MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
+    if(md3dDevice != nullptr)
+    {
+        mCamera.SetLens(0.25f*MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
+    }
+    XMMATRIX P = mCamera.GetProj();
     XMStoreFloat4x4(&mProj, P);
 }
 
@@ -152,6 +175,21 @@ void BaselineApp::Update(const GameTimer& gt)
     mCubeRotation += 1.0f * gt.DeltaTime();
     if(mCubeRotation > XM_2PI)
         mCubeRotation -= XM_2PI;
+
+    // Update camera movement
+    const float dt = gt.DeltaTime();
+    const float moveSpeed = 5.0f;
+    
+    if(GetAsyncKeyState('W') & 0x8000)
+        mCamera.Walk(moveSpeed * dt);
+    if(GetAsyncKeyState('S') & 0x8000)
+        mCamera.Walk(-moveSpeed * dt);
+    if(GetAsyncKeyState('A') & 0x8000)
+        mCamera.Strafe(-moveSpeed * dt);
+    if(GetAsyncKeyState('D') & 0x8000)
+        mCamera.Strafe(moveSpeed * dt);
+
+    mCamera.UpdateViewMatrix();
 
     mCurrFrameResourceIndex = (mCurrFrameResourceIndex + 1) % gNumFrameResources;
     mCurrFrameResource = mFrameResources[mCurrFrameResourceIndex].get();
@@ -239,85 +277,46 @@ void BaselineApp::BuildRootSignature()
 
 void BaselineApp::BuildShadersAndInputLayout()
 {
-    mShaders["cubeVS"] = d3dUtil::CompileShader(L"Shaders\\Pyramid.hlsl", nullptr, "VS", "vs_5_1");
-    mShaders["cubePS"] = d3dUtil::CompileShader(L"Shaders\\Pyramid.hlsl", nullptr, "PS", "ps_5_1");
+    mShaders["pyramidVS"] = d3dUtil::CompileShader(L"Shaders\\Pyramid.hlsl", nullptr, "VS", "vs_5_1");
+    mShaders["pyramidPS"] = d3dUtil::CompileShader(L"Shaders\\Pyramid.hlsl", nullptr, "PS", "ps_5_1");
 
     mInputLayout =
     {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        { "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 28, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
     };
 }
 
 void BaselineApp::BuildCubeGeometry()
 {
-    // Create a cube with rainbow colors and correct normals
-    // Cube centered at origin with size 2 (from -1 to +1 on each axis)
-    // Each face has 4 vertices with appropriate normals pointing outward
-    std::array<Vertex, 24> vertices =
+    // Use GeometryGenerator to create a cube with proper normals
+    GeometryGenerator geoGen;
+    GeometryGenerator::MeshData box = geoGen.CreateBox(2.0f, 2.0f, 2.0f, 0); // 2x2x2 cube
+
+    // Convert GeometryGenerator vertices to our Vertex format (Pos + Color)
+    // We'll assign colors based on face normals for visual distinction
+    std::vector<Vertex> vertices(box.Vertices.size());
+    
+    for(size_t i = 0; i < box.Vertices.size(); ++i)
     {
-        // Front face (Z = +1) - Normal pointing +Z
-        Vertex(XMFLOAT3(-1.0f, -1.0f,  1.0f), XMFLOAT4(1.0f, 0.0f, 0.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, 1.0f)), // Red
-        Vertex(XMFLOAT3( 1.0f, -1.0f,  1.0f), XMFLOAT4(1.0f, 0.5f, 0.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, 1.0f)), // Orange
-        Vertex(XMFLOAT3( 1.0f,  1.0f,  1.0f), XMFLOAT4(1.0f, 1.0f, 0.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, 1.0f)), // Yellow
-        Vertex(XMFLOAT3(-1.0f,  1.0f,  1.0f), XMFLOAT4(0.0f, 1.0f, 0.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, 1.0f)), // Green
+        const auto& v = box.Vertices[i];
+        XMFLOAT4 color;
+        
+        // Assign color based on normal direction for visual distinction
+        // Map normals to colors (normalized to 0-1 range)
+        color.x = (v.Normal.x + 1.0f) * 0.5f;
+        color.y = (v.Normal.y + 1.0f) * 0.5f;
+        color.z = (v.Normal.z + 1.0f) * 0.5f;
+        color.w = 1.0f;
+        
+        vertices[i] = Vertex(v.Position, color);
+    }
 
-        // Back face (Z = -1) - Normal pointing -Z
-        Vertex(XMFLOAT3( 1.0f, -1.0f, -1.0f), XMFLOAT4(0.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, -1.0f)), // Cyan
-        Vertex(XMFLOAT3(-1.0f, -1.0f, -1.0f), XMFLOAT4(0.0f, 0.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, -1.0f)), // Blue
-        Vertex(XMFLOAT3(-1.0f,  1.0f, -1.0f), XMFLOAT4(0.5f, 0.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, -1.0f)), // Purple
-        Vertex(XMFLOAT3( 1.0f,  1.0f, -1.0f), XMFLOAT4(1.0f, 0.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, -1.0f)), // Magenta
-
-        // Top face (Y = +1) - Normal pointing +Y
-        Vertex(XMFLOAT3(-1.0f,  1.0f,  1.0f), XMFLOAT4(0.0f, 1.0f, 0.0f, 1.0f), XMFLOAT3(0.0f, 1.0f, 0.0f)), // Green
-        Vertex(XMFLOAT3( 1.0f,  1.0f,  1.0f), XMFLOAT4(1.0f, 1.0f, 0.0f, 1.0f), XMFLOAT3(0.0f, 1.0f, 0.0f)), // Yellow
-        Vertex(XMFLOAT3( 1.0f,  1.0f, -1.0f), XMFLOAT4(1.0f, 0.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, 1.0f, 0.0f)), // Magenta
-        Vertex(XMFLOAT3(-1.0f,  1.0f, -1.0f), XMFLOAT4(0.5f, 0.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, 1.0f, 0.0f)), // Purple
-
-        // Bottom face (Y = -1) - Normal pointing -Y
-        Vertex(XMFLOAT3(-1.0f, -1.0f, -1.0f), XMFLOAT4(0.0f, 0.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, -1.0f, 0.0f)), // Blue
-        Vertex(XMFLOAT3( 1.0f, -1.0f, -1.0f), XMFLOAT4(0.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, -1.0f, 0.0f)), // Cyan
-        Vertex(XMFLOAT3( 1.0f, -1.0f,  1.0f), XMFLOAT4(1.0f, 0.5f, 0.0f, 1.0f), XMFLOAT3(0.0f, -1.0f, 0.0f)), // Orange
-        Vertex(XMFLOAT3(-1.0f, -1.0f,  1.0f), XMFLOAT4(1.0f, 0.0f, 0.0f, 1.0f), XMFLOAT3(0.0f, -1.0f, 0.0f)), // Red
-
-        // Right face (X = +1) - Normal pointing +X
-        Vertex(XMFLOAT3( 1.0f, -1.0f,  1.0f), XMFLOAT4(1.0f, 0.5f, 0.0f, 1.0f), XMFLOAT3(1.0f, 0.0f, 0.0f)), // Orange
-        Vertex(XMFLOAT3( 1.0f, -1.0f, -1.0f), XMFLOAT4(0.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(1.0f, 0.0f, 0.0f)), // Cyan
-        Vertex(XMFLOAT3( 1.0f,  1.0f, -1.0f), XMFLOAT4(1.0f, 0.0f, 1.0f, 1.0f), XMFLOAT3(1.0f, 0.0f, 0.0f)), // Magenta
-        Vertex(XMFLOAT3( 1.0f,  1.0f,  1.0f), XMFLOAT4(1.0f, 1.0f, 0.0f, 1.0f), XMFLOAT3(1.0f, 0.0f, 0.0f)), // Yellow
-
-        // Left face (X = -1) - Normal pointing -X
-        Vertex(XMFLOAT3(-1.0f, -1.0f, -1.0f), XMFLOAT4(0.0f, 0.0f, 1.0f, 1.0f), XMFLOAT3(-1.0f, 0.0f, 0.0f)), // Blue
-        Vertex(XMFLOAT3(-1.0f, -1.0f,  1.0f), XMFLOAT4(1.0f, 0.0f, 0.0f, 1.0f), XMFLOAT3(-1.0f, 0.0f, 0.0f)), // Red
-        Vertex(XMFLOAT3(-1.0f,  1.0f,  1.0f), XMFLOAT4(0.0f, 1.0f, 0.0f, 1.0f), XMFLOAT3(-1.0f, 0.0f, 0.0f)), // Green
-        Vertex(XMFLOAT3(-1.0f,  1.0f, -1.0f), XMFLOAT4(0.5f, 0.0f, 1.0f, 1.0f), XMFLOAT3(-1.0f, 0.0f, 0.0f)), // Purple
-    };
-
-    std::array<std::uint16_t, 36> indices =
-    {
-        // Front face (Z = +1) - counter-clockwise when viewed from +Z
-        0,  1,  2,
-        0,  2,  3,
-        // Back face (Z = -1) - counter-clockwise when viewed from -Z  
-        4,  7,  6,
-        4,  6,  5,
-        // Top face (Y = +1) - counter-clockwise when viewed from +Y
-        8,  9,  10,
-        8,  10, 11,
-        // Bottom face (Y = -1) - counter-clockwise when viewed from -Y
-        12, 13, 14,
-        12, 14, 15,
-        // Right face (X = +1) - counter-clockwise when viewed from +X
-        16, 17, 18,
-        16, 18, 19,
-        // Left face (X = -1) - counter-clockwise when viewed from -X
-        20, 21, 22,
-        20, 22, 23,
-    };
+    // Convert indices from 32-bit to 16-bit
+    std::vector<std::uint16_t> indices16 = box.GetIndices16();
 
     const UINT vbByteSize = (UINT)vertices.size() * sizeof(Vertex);
-    const UINT ibByteSize = (UINT)indices.size() * sizeof(std::uint16_t);
+    const UINT ibByteSize = (UINT)indices16.size() * sizeof(std::uint16_t);
 
     auto geo = std::make_unique<MeshGeometry>();
     geo->Name = "cubeGeo";
@@ -326,13 +325,13 @@ void BaselineApp::BuildCubeGeometry()
     CopyMemory(geo->VertexBufferCPU->GetBufferPointer(), vertices.data(), vbByteSize);
 
     ThrowIfFailed(D3DCreateBlob(ibByteSize, &geo->IndexBufferCPU));
-    CopyMemory(geo->IndexBufferCPU->GetBufferPointer(), indices.data(), ibByteSize);
+    CopyMemory(geo->IndexBufferCPU->GetBufferPointer(), indices16.data(), ibByteSize);
 
     geo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
         mCommandList.Get(), vertices.data(), vbByteSize, geo->VertexBufferUploader);
 
     geo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
-        mCommandList.Get(), indices.data(), ibByteSize, geo->IndexBufferUploader);
+        mCommandList.Get(), indices16.data(), ibByteSize, geo->IndexBufferUploader);
 
     geo->VertexByteStride = sizeof(Vertex);
     geo->VertexBufferByteSize = vbByteSize;
@@ -340,7 +339,7 @@ void BaselineApp::BuildCubeGeometry()
     geo->IndexBufferByteSize = ibByteSize;
 
     SubmeshGeometry submesh;
-    submesh.IndexCount = (UINT)indices.size();
+    submesh.IndexCount = (UINT)indices16.size();
     submesh.StartIndexLocation = 0;
     submesh.BaseVertexLocation = 0;
 
@@ -357,13 +356,13 @@ void BaselineApp::BuildPSOs()
     psoDesc.pRootSignature = mRootSignature.Get();
     psoDesc.VS = 
     { 
-        reinterpret_cast<BYTE*>(mShaders["cubeVS"]->GetBufferPointer()), 
-        mShaders["cubeVS"]->GetBufferSize()
+        reinterpret_cast<BYTE*>(mShaders["pyramidVS"]->GetBufferPointer()), 
+        mShaders["pyramidVS"]->GetBufferSize()
     };
     psoDesc.PS = 
     { 
-        reinterpret_cast<BYTE*>(mShaders["cubePS"]->GetBufferPointer()),
-        mShaders["cubePS"]->GetBufferSize()
+        reinterpret_cast<BYTE*>(mShaders["pyramidPS"]->GetBufferPointer()),
+        mShaders["pyramidPS"]->GetBufferSize()
     };
     psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
     psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
@@ -418,14 +417,12 @@ void BaselineApp::UpdateObjectCBs(const GameTimer& gt)
 
 void BaselineApp::UpdatePassCB(const GameTimer& gt)
 {
-    XMMATRIX view = XMMatrixLookAtLH(
-        XMVectorSet(0.0f, 2.0f, -5.0f, 0.0f),  // Eye position
-        XMVectorSet(0.0f, 0.0f, 0.0f, 0.0f),  // Focus position
-        XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f)); // Up direction
-    
-    XMMATRIX proj = XMLoadFloat4x4(&mProj);
+    // Use camera view matrix
+    XMMATRIX view = mCamera.GetView();
+    XMMATRIX proj = mCamera.GetProj();
     
     XMStoreFloat4x4(&mView, view);
+    XMStoreFloat4x4(&mProj, proj);
 
     auto currPassCB = mCurrFrameResource->PassCB.get();
     PassConstants passConstants;
@@ -452,4 +449,46 @@ void BaselineApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList)
 
         cmdList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
     }
+}
+
+void BaselineApp::OnMouseDown(WPARAM btnState, int x, int y)
+{
+    if((btnState & MK_RBUTTON) != 0)
+    {
+        mRightMouseDown = true;
+        mLastMousePos.x = x;
+        mLastMousePos.y = y;
+        SetCapture(mhMainWnd);
+    }
+}
+
+void BaselineApp::OnMouseUp(WPARAM btnState, int x, int y)
+{
+    ReleaseCapture();
+    mRightMouseDown = false;
+}
+
+void BaselineApp::OnMouseMove(WPARAM btnState, int x, int y)
+{
+    if(mRightMouseDown)
+    {
+        // Make each pixel correspond to a quarter of a degree.
+        float dx = XMConvertToRadians(0.25f * static_cast<float>(x - mLastMousePos.x));
+        float dy = XMConvertToRadians(0.25f * static_cast<float>(y - mLastMousePos.y));
+
+        mCamera.Pitch(dy);
+        mCamera.Yaw(dx);
+
+        mCamera.UpdateViewMatrix();
+    }
+
+    mLastMousePos.x = x;
+    mLastMousePos.y = y;
+}
+
+void BaselineApp::OnKeyPressed(const GameTimer& gt, WPARAM key)
+{
+    // WASD movement is handled in Update() via GetAsyncKeyState
+    // This method is called for key down events, but we're handling continuous
+    // movement in Update() instead for smoother control
 }

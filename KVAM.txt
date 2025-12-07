@@ -1,0 +1,534 @@
+#include <iostream>
+#include <fstream>
+namespace KVAM {
+
+	std::vector<bool> fallen_flg{};
+
+	std::vector<XMFLOAT3> ball_directions{}, ball_positions{};
+
+	std::unordered_map<std::string, std::vector<RenderItem*>> KvaziLst;
+
+	void KvaziModo_Init(
+		std::unordered_map<std::string, std::unique_ptr<MeshGeometry>>& geo_list,
+		std::vector<std::unique_ptr<RenderItem>>& renderItems
+	)
+	{
+		KvaziLst.clear();
+		std::cout << "Started init"<< std::endl;
+		
+		// Process regular DrawArgs
+		for (std::pair<const std::string, std::unique_ptr<MeshGeometry>>& geoPair : geo_list)
+		{
+			MeshGeometry* geo = geoPair.second.get();
+			for (const std::pair<const std::string, SubmeshGeometry>& drawPair : geo->DrawArgs)
+			{
+				const std::string& objectType = drawPair.first;
+				if (KvaziLst.find(objectType) == KvaziLst.end())
+				{
+					KvaziLst[objectType] = {};
+				}
+			}
+		}
+		
+		// Process MultiDrawArgs for custom meshes
+		for (std::pair<const std::string, std::unique_ptr<MeshGeometry>>& geoPair : geo_list)
+		{
+			MeshGeometry* geo = geoPair.second.get();
+			for (const std::pair<const std::string, std::vector<std::pair<GeometryGenerator::MeshData, SubmeshGeometry>>>& multiDrawPair : geo->MultiDrawArgs)
+			{
+				const std::string& objectType = multiDrawPair.first;
+				if (KvaziLst.find(objectType) == KvaziLst.end())
+				{
+					KvaziLst[objectType] = {};
+				}
+			}
+		}
+		
+		std::cout << "Done first init" << std::endl;
+		for (std::unique_ptr<RenderItem>& item : renderItems)
+		{
+			for (std::pair<const std::string, std::vector<RenderItem*>>& kvaziPair : KvaziLst)
+			{
+				const std::string& objectType = kvaziPair.first;
+				for (std::pair<const std::string, std::unique_ptr<MeshGeometry>>& geoPair : geo_list)
+				{
+					MeshGeometry* geo = geoPair.second.get();
+					
+					// Check regular DrawArgs
+					if (geo->DrawArgs.find(objectType) != geo->DrawArgs.end() && 
+						item->IndexCount == geo->DrawArgs[objectType].IndexCount)
+					{
+						KvaziLst[objectType].push_back(item.get());
+					}
+					// Check MultiDrawArgs for custom meshes
+					else if (geo->MultiDrawArgs.find(objectType) != geo->MultiDrawArgs.end())
+					{
+						for (const auto& meshPair : geo->MultiDrawArgs[objectType])
+						{
+							if (item->IndexCount == meshPair.second.IndexCount)
+							{
+								KvaziLst[objectType].push_back(item.get());
+								break;
+							}
+						}
+					}
+				}
+			}
+		}
+		std::cout << "Done second init"<<std::endl;
+	}
+
+	void OutputObjectTypesAndCounts()
+	{
+		std::ofstream outFile("itemslist.txt");
+		if (outFile.is_open())
+		{
+			outFile << "--- Object Types and Counts ---\n";
+			for (std::pair<const std::string, std::vector<RenderItem*>>& kvaziPair : KvaziLst)
+			{
+				const std::string& objectType = kvaziPair.first;
+				const size_t count = kvaziPair.second.size();
+				outFile << "Type: " << objectType << ", Count: " << count << ", Vertex count: " << ((count==0) ? 0 : kvaziPair.second.at(0)->IndexCount) << "\n";
+			}
+			outFile << "------------------------------\n";
+			outFile.close();
+		}
+		else
+		{
+			std::cerr << "Unable to open file itemslist.txt for writing." << std::endl;
+		}
+	}
+	void RotateItem(
+		float deltaTime,
+		const std::string& objectType,
+		int index,
+		XMFLOAT3 pivotPoint,
+		XMFLOAT3 rotationAxis,
+		float mult = 10.0f
+	)
+	{
+		if (KvaziLst.find(objectType) != KvaziLst.end() && index < KvaziLst[objectType].size())
+		{
+			RenderItem* item = KvaziLst[objectType][index];
+
+			float angle = XMConvertToRadians(1.0f) * deltaTime * mult;
+			XMMATRIX rotationMatrix = XMMatrixRotationAxis(XMVector3Normalize(XMLoadFloat3(&rotationAxis)), angle);
+
+			XMMATRIX world = XMLoadFloat4x4(&item->World);
+
+			XMMATRIX toPivot = XMMatrixTranslation(-pivotPoint.x, -pivotPoint.y, -pivotPoint.z);
+			XMMATRIX fromPivot = XMMatrixTranslation(pivotPoint.x, pivotPoint.y, pivotPoint.z);
+
+			world = toPivot * world * rotationMatrix * fromPivot;
+			XMStoreFloat4x4(&item->World, world);
+
+			item->NumFramesDirty = gNumFrameResources;
+		}
+	}
+
+	void RotateItemsAroundPoint(
+		float deltaTime,
+		const std::string& objectType,
+		XMFLOAT3 pivotPoint,
+		XMFLOAT3 rotationAxis,
+		float mult = 10.0f
+	)
+	{
+		if (KvaziLst.find(objectType) == KvaziLst.end()) return;
+
+		for (int i = 0; i < KvaziLst[objectType].size(); ++i)
+		{
+			RotateItem(deltaTime, objectType, i, pivotPoint, rotationAxis, mult);
+		}
+	}
+
+	void RotateItemAroundObject(
+		float deltaTime,
+		const std::string& objectType,
+		int index,
+		const std::string& pivotObjectType,
+		int pivotIndex,
+		XMFLOAT3 rotationAxis,
+		float mult = 10.0f
+	)
+	{
+		if (KvaziLst.find(pivotObjectType) != KvaziLst.end() && pivotIndex < KvaziLst[pivotObjectType].size())
+		{
+			RenderItem* pivotItem = KvaziLst[pivotObjectType][pivotIndex];
+			XMFLOAT3 pivotPoint = XMFLOAT3(pivotItem->World._41, pivotItem->World._42, pivotItem->World._43);
+
+			RotateItem(deltaTime, objectType, index, pivotPoint, rotationAxis, mult);
+		}
+	}
+	void RotateItemsOfTypeAroundObject(
+		float deltaTime,
+		const std::string& objectType,
+		const std::string& pivotObjectType,
+		int pivotIndex,
+		XMFLOAT3 rotationAxis,
+		float mult = 10.0f) {
+		if (KvaziLst.find(objectType) == KvaziLst.end() ||
+			KvaziLst.find(pivotObjectType) == KvaziLst.end() ||
+			pivotIndex >= KvaziLst[pivotObjectType].size()) return;
+
+		RenderItem* pivotItem = KvaziLst[pivotObjectType][pivotIndex];
+		XMFLOAT3 pivotPoint = XMFLOAT3(pivotItem->World._41, pivotItem->World._42, pivotItem->World._43);
+
+		for (int i = 0; i < KvaziLst[objectType].size(); ++i)
+		{
+			RotateItem(deltaTime, objectType, i, pivotPoint, rotationAxis, mult);
+		}
+	}
+
+	void MoveItem(
+		const std::string& objectType,
+		int index,
+		XMFLOAT3 translationVector
+	)
+	{
+		if (KvaziLst.find(objectType) != KvaziLst.end() && index < KvaziLst[objectType].size())
+		{
+			RenderItem* item = KvaziLst[objectType][index];
+
+			XMMATRIX world = XMLoadFloat4x4(&item->World);
+			XMMATRIX translationMatrix = XMMatrixTranslation(translationVector.x, translationVector.y, translationVector.z);
+
+			//                                               
+			world = translationMatrix * world;
+			XMStoreFloat4x4(&item->World, world);
+
+			item->NumFramesDirty = gNumFrameResources;
+		}
+	}
+
+	void MoveItemRelativeToPoint(
+		const std::string& objectType,
+		int index,
+		XMFLOAT3 targetPoint,
+		XMFLOAT3 translationVector
+	)
+	{
+		if (KvaziLst.find(objectType) != KvaziLst.end() && index < KvaziLst[objectType].size())
+		{
+			RenderItem* item = KvaziLst[objectType][index];
+
+			XMMATRIX world = XMLoadFloat4x4(&item->World);
+
+			//                                               
+			XMMATRIX toTarget = XMMatrixTranslation(-targetPoint.x, -targetPoint.y, -targetPoint.z);
+			XMMATRIX fromTarget = XMMatrixTranslation(targetPoint.x, targetPoint.y, targetPoint.z);
+			XMMATRIX translationMatrix = XMMatrixTranslation(translationVector.x, translationVector.y, translationVector.z);
+
+			world = toTarget * translationMatrix * fromTarget * world;
+			XMStoreFloat4x4(&item->World, world);
+
+			item->NumFramesDirty = gNumFrameResources;
+		}
+	}
+	void MoveItemRelativeToObject(
+		const std::string& objectType,
+		int index,
+		const std::string& targetObjectType,
+		int targetIndex,
+		XMFLOAT3 translationVector
+	)
+	{
+		if (KvaziLst.find(objectType) != KvaziLst.end() && index < KvaziLst[objectType].size() &&
+			KvaziLst.find(targetObjectType) != KvaziLst.end() && targetIndex < KvaziLst[targetObjectType].size())
+		{
+			RenderItem* item = KvaziLst[objectType][index];
+			RenderItem* targetItem = KvaziLst[targetObjectType][targetIndex];
+
+			XMFLOAT3 targetPoint = XMFLOAT3(targetItem->World._41, targetItem->World._42, targetItem->World._43);
+
+			XMFLOAT3 newPosition = XMFLOAT3(
+				targetPoint.x + translationVector.x,
+				targetPoint.y + translationVector.y,
+				targetPoint.z + translationVector.z
+			);
+
+			XMMATRIX translationMatrix = XMMatrixTranslation(newPosition.x, newPosition.y, newPosition.z);
+			XMStoreFloat4x4(&item->World, translationMatrix);
+
+			item->NumFramesDirty = gNumFrameResources;
+		}
+	}
+
+
+	struct ParentIssue {
+		std::string childObjectType;
+		int childIndex;
+		std::string parentObjectType;
+		int parentIndex;
+		XMFLOAT3 relativeOffset;
+	};
+
+	std::vector<ParentIssue> ParentsIssues;
+
+	void AddParentIssue(
+		const std::string& childObjectType,
+		int childIndex,
+		const std::string& parentObjectType,
+		int parentIndex,
+		XMFLOAT3 relativeOffset
+	)
+	{
+		ParentIssue issue = { childObjectType, childIndex, parentObjectType, parentIndex, relativeOffset };
+		ParentsIssues.push_back(issue);
+	}
+
+	void UpdateParentIssues()
+	{
+		for (const ParentIssue& issue : ParentsIssues)
+		{
+			MoveItemRelativeToObject(
+				issue.childObjectType,
+				issue.childIndex,
+				issue.parentObjectType,
+				issue.parentIndex,
+				issue.relativeOffset
+			);
+		}
+	}
+
+	void ResetParentIssues()
+	{
+		for (ParentIssue& issue : ParentsIssues)
+		{
+			if (KvaziLst.find(issue.childObjectType) != KvaziLst.end() && issue.childIndex < KvaziLst[issue.childObjectType].size() &&
+				KvaziLst.find(issue.parentObjectType) != KvaziLst.end() && issue.parentIndex < KvaziLst[issue.parentObjectType].size())
+			{
+				RenderItem* childItem = KvaziLst[issue.childObjectType][issue.childIndex];
+				RenderItem* parentItem = KvaziLst[issue.parentObjectType][issue.parentIndex];
+
+				XMFLOAT3 childPos = XMFLOAT3(childItem->World._41, childItem->World._42, childItem->World._43);
+				XMFLOAT3 parentPos = XMFLOAT3(parentItem->World._41, parentItem->World._42, parentItem->World._43);
+
+				issue.relativeOffset = XMFLOAT3(
+					childPos.x - parentPos.x,
+					childPos.y - parentPos.y,
+					childPos.z - parentPos.z
+				);
+			}
+		}
+	}
+
+	void BoingBoingAnim(
+		const std::string& objectType,
+		int index,
+		XMFLOAT3 startPos,
+		XMFLOAT3 endPos,
+		float deltaTime,
+		float targetTime
+	)
+	{
+		if (KvaziLst.find(objectType) != KvaziLst.end() && index < KvaziLst[objectType].size())
+		{
+			RenderItem* item = KvaziLst[objectType][index];
+
+			//                                                   
+			static float accumulatedTime = 0.0f;
+			accumulatedTime += deltaTime;
+
+			float timeRatio = fmod(accumulatedTime, targetTime) / targetTime; //                              0    1
+			float animFactor = sinf(timeRatio * DirectX::XM_PI * 2.0f) * 0.5f + 0.5f; //                       
+
+			XMFLOAT3 position = XMFLOAT3(
+				startPos.x + (endPos.x - startPos.x) * animFactor,
+				startPos.y + (endPos.y - startPos.y) * animFactor,
+				startPos.z + (endPos.z - startPos.z) * animFactor
+			);
+
+			//                                  
+			XMMATRIX translationMatrix = XMMatrixTranslation(position.x, position.y, position.z);
+			XMStoreFloat4x4(&item->World, translationMatrix);
+
+			item->NumFramesDirty = gNumFrameResources;
+		}
+	}
+
+
+	namespace Baletaria {
+		bool is_flying = false;
+		XMFLOAT3 direction = XMFLOAT3(0.0f, 0.0f, 0.0f);
+		XMFLOAT3 bulletPosition = XMFLOAT3(0.0f, 0.0f, 0.0f);
+		float bulletSpeed = 1.0f;
+		float gravity = -0.005f;
+
+		RenderItem* Bullet = nullptr;
+
+		ID3D12Resource* heightmapTex = nullptr;
+		float displacementScale = 1.0f;
+
+
+		void InitBullet(const std::pair<std::string, int>& bulletInfo) {
+			if (KvaziLst.find(bulletInfo.first) != KvaziLst.end() && bulletInfo.second < KvaziLst[bulletInfo.first].size()) {
+				Bullet = KvaziLst[bulletInfo.first][bulletInfo.second];
+				is_flying = false;
+			}
+		}
+
+		
+		void bullet_launch(XMFLOAT4X4 mView, XMFLOAT3 mEyePos) {
+			if (Bullet == nullptr) return;
+
+			is_flying = true;
+
+			//                                                                    (0, 0, 0)
+			direction = XMFLOAT3(
+				-mEyePos.x,
+				-mEyePos.y,
+				-mEyePos.z
+			);
+
+			//                                 
+			XMVECTOR dirVector = XMLoadFloat3(&direction);
+			dirVector = XMVector3Normalize(dirVector);
+			XMStoreFloat3(&direction, dirVector);
+
+			//                                       
+			bulletPosition = XMFLOAT3(Bullet->World._41, Bullet->World._42, Bullet->World._43);
+
+			XMMATRIX world = XMLoadFloat4x4(&Bullet->World);
+			XMMATRIX translationMatrix = XMMatrixTranslation(
+				bulletPosition.x - Bullet->World._41,
+				bulletPosition.y - Bullet->World._42,
+				bulletPosition.z - Bullet->World._43
+			);
+
+			world = world * translationMatrix;
+			XMStoreFloat4x4(&Bullet->World, world);
+
+			Bullet->NumFramesDirty = gNumFrameResources;
+		}
+
+		void bullet_launch_plus(XMFLOAT4X4 mView, XMFLOAT3 mEyePos, XMFLOAT3 launch_dir) {
+			if (Bullet == nullptr) return;
+
+			is_flying = true;
+
+			//                                                                    (0, 0, 0)
+			/*
+			direction = XMFLOAT3(
+				-mEyePos.x,
+				-mEyePos.y,  
+				-mEyePos.z
+			);*/
+
+			direction = launch_dir;
+
+
+			//                                 
+			XMVECTOR dirVector = XMLoadFloat3(&direction);
+			dirVector = XMVector3Normalize(dirVector);
+			XMStoreFloat3(&direction, dirVector);
+
+			//                                       
+			bulletPosition = XMFLOAT3(Bullet->World._41, Bullet->World._42, Bullet->World._43);
+
+			XMMATRIX world = XMLoadFloat4x4(&Bullet->World);
+			XMMATRIX translationMatrix = XMMatrixTranslation(
+				bulletPosition.x - Bullet->World._41,
+				bulletPosition.y - Bullet->World._42,
+				bulletPosition.z - Bullet->World._43
+			);
+
+			world = world * translationMatrix;
+			XMStoreFloat4x4(&Bullet->World, world);
+
+			Bullet->NumFramesDirty = gNumFrameResources;
+		}
+
+		void BulletIdle(XMFLOAT3 cameraPosition) {
+			if (Bullet == nullptr) return;
+
+			bulletPosition = cameraPosition;
+
+			XMMATRIX world = XMLoadFloat4x4(&Bullet->World);
+			XMMATRIX translationMatrix = XMMatrixTranslation(
+				cameraPosition.x - Bullet->World._41,
+				cameraPosition.y - Bullet->World._42,
+				cameraPosition.z - Bullet->World._43
+			);
+
+			world = world * translationMatrix;
+			XMStoreFloat4x4(&Bullet->World, world);
+
+			Bullet->NumFramesDirty = gNumFrameResources;
+		}
+
+		void BulletResolve() {
+			if (!is_flying || Bullet == nullptr) return;
+
+			bulletPosition.x += direction.x * bulletSpeed;
+			bulletPosition.y += direction.y * bulletSpeed + gravity;
+			bulletPosition.z += direction.z * bulletSpeed;
+
+			XMMATRIX world = XMLoadFloat4x4(&Bullet->World);
+			XMMATRIX translationMatrix = XMMatrixTranslation(
+				bulletPosition.x - Bullet->World._41,
+				bulletPosition.y - Bullet->World._42,
+				bulletPosition.z - Bullet->World._43
+			);
+
+			world = world * translationMatrix;
+			XMStoreFloat4x4(&Bullet->World, world);
+
+			Bullet->NumFramesDirty = gNumFrameResources;
+		}
+
+		void CheckCollisionAndResetBullet() {
+			if (!is_flying || Bullet == nullptr) return;
+
+			for (auto& kv : KvaziLst) {
+				for (RenderItem* item : kv.second) {
+					std::cout << ((kv.first == "grid") ? item->Geo->VertexBufferCPU->GetBufferSize() : NULL) << std::endl;
+					MeshGeometry* geo = item->Geo;
+					if (geo == nullptr) continue;
+
+					//                                
+					for (size_t i = 0; i < geo->VertexBufferCPU->GetBufferSize() / sizeof(Vertex); ++i) {
+						Vertex* vertices = reinterpret_cast<Vertex*>(geo->VertexBufferCPU->GetBufferPointer());
+						XMFLOAT3 vertexPos = vertices[i].Pos;
+
+						//                                                   
+						XMMATRIX world = XMLoadFloat4x4(&item->World);
+						XMVECTOR localPos = XMLoadFloat3(&vertexPos);
+						XMVECTOR worldPos = XMVector3Transform(localPos, world);
+
+						XMFLOAT3 transformedPos;
+						XMStoreFloat3(&transformedPos, worldPos);
+
+						//                                        
+						float distance = sqrtf(
+							powf(bulletPosition.x - transformedPos.x, 2) +
+							powf(bulletPosition.y - transformedPos.y, 2) +
+							powf(bulletPosition.z - transformedPos.z, 2)
+						);
+
+						if (distance <= 0.1f) {
+							is_flying = false;
+
+							bulletPosition = XMFLOAT3(Bullet->World._41, Bullet->World._42, Bullet->World._43);
+							XMMATRIX world = XMLoadFloat4x4(&Bullet->World);
+							XMMATRIX translationMatrix = XMMatrixTranslation(
+								bulletPosition.x - Bullet->World._41,
+								bulletPosition.y - Bullet->World._42,
+								bulletPosition.z - Bullet->World._43
+							);
+
+							world = world * translationMatrix;
+							XMStoreFloat4x4(&Bullet->World, world);
+
+							Bullet->NumFramesDirty = gNumFrameResources;
+							return;
+						}
+					}
+				}
+			}
+		}
+
+	}
+
+}
+
