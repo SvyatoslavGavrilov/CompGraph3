@@ -1,0 +1,61 @@
+﻿  Camera.cpp
+  d3dApp.cpp
+  d3dUtil.cpp
+  DDSTextureLoader.cpp
+  GameTimer.cpp
+  GeometryGenerator.cpp
+  imgui.cpp
+  imgui_draw.cpp
+  imgui_impl_dx12.cpp
+  imgui_impl_win32.cpp
+  imgui_tables.cpp
+  imgui_widgets.cpp
+  MathHelper.cpp
+  model.cpp
+  FrameResource.cpp
+  TexColumnsApp.cpp
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(241,2): warning C4996: 'freopen': This function or variable may be unsafe. Consider using freopen_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(242,2): warning C4996: 'freopen': This function or variable may be unsafe. Consider using freopen_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(243,2): warning C4996: 'freopen': This function or variable may be unsafe. Consider using freopen_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(328,66): warning C4244: аргумент: преобразование "double" в "float", возможна потеря данных
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(337,24): warning C4305: =: усечение из "double" в "float"
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(338,24): warning C4305: =: усечение из "double" в "float"
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(339,24): warning C4305: =: усечение из "double" в "float"
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(341,25): warning C4305: =: усечение из "double" в "float"
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(342,25): warning C4305: =: усечение из "double" в "float"
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(343,25): warning C4305: =: усечение из "double" в "float"
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(376,91): warning C4305: аргумент: усечение из "double" в "float"
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(376,87): warning C4305: аргумент: усечение из "double" в "float"
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(376,82): warning C4305: аргумент: усечение из "double" в "float"
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(381,94): warning C4305: аргумент: усечение из "double" в "float"
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(381,89): warning C4305: аргумент: усечение из "double" в "float"
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(381,82): warning C4305: аргумент: усечение из "double" в "float"
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(463,21): warning C4305: аргумент: усечение из "double" в "float"
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(467,21): warning C4305: аргумент: усечение из "double" в "float"
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(947,35): warning C4267: =: преобразование из "size_t" в "int"; возможна потеря данных
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(969,37): warning C4267: =: преобразование из "size_t" в "int"; возможна потеря данных
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(972,23): warning C4305: аргумент: усечение из "double" в "float"
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(978,36): warning C4267: =: преобразование из "size_t" в "int"; возможна потеря данных
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(980,26): warning C4305: аргумент: усечение из "double" в "float"
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(988,36): warning C4267: =: преобразование из "size_t" в "int"; возможна потеря данных
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(1021,48): warning C4267: =: преобразование из "size_t" в "UINT"; возможна потеря данных
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(1131,19): warning C4018: <: несоответствие типов со знаком и без знака
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(1202,19): warning C4018: <: несоответствие типов со знаком и без знака
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(1229,9): warning C4267: инициализация: преобразование из "size_t" в "UINT"; возможна потеря данных
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(1234,36): warning C4267: =: преобразование из "size_t" в "UINT"; возможна потеря данных
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(1235,38): warning C4267: +=: преобразование из "size_t" в "UINT"; возможна потеря данных
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(1238,36): warning C4267: =: преобразование из "size_t" в "UINT"; возможна потеря данных
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(1584,19): warning C4018: <: несоответствие типов со знаком и без знака
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(1591,38): warning C4267: =: преобразование из "size_t" в "UINT"; возможна потеря данных
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(1625,73): warning C4305: аргумент: усечение из "double" в "float"
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(1625,67): warning C4305: аргумент: усечение из "double" в "float"
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(1625,61): warning C4305: аргумент: усечение из "double" в "float"
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(1625,117): warning C4305: аргумент: усечение из "double" в "float"
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(1626,106): warning C4305: аргумент: усечение из "double" в "float"
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(1627,100): warning C4305: аргумент: усечение из "double" в "float"
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(1628,101): warning C4305: аргумент: усечение из "double" в "float"
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(1790,41): warning C4267: аргумент: преобразование из "size_t" в "INT"; возможна потеря данных
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(1792,39): warning C4267: аргумент: преобразование из "size_t" в "INT"; возможна потеря данных
+G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumnsApp.cpp(1794,39): warning C4267: аргумент: преобразование из "size_t" в "INT"; возможна потеря данных
+  Создание кода...
+  TexColumns.vcxproj -> G:\AsciChalenge\ITMO\CGLabsFinisher\CGLAB-lab6\src\Code\Main\TexColumns.exe
