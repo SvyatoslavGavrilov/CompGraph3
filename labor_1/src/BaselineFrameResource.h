@@ -15,6 +15,17 @@ struct ObjectConstants
 struct PassConstants
 {
     float TotalTime = 0.0f;
+    
+    // Heightmap parameters
+    float heightScale = 100.0f;           // Scale factor for height values
+    float terrainSize = 1000.0f;          // Size of terrain in world units
+    UINT heightmapWidth = 256;            // Default heightmap width
+    UINT heightmapHeight = 256;           // Default heightmap height
+    float tileSize = 32.0f;               // Size of each terrain tile
+    
+    // Camera position for LOD calculations
+    DirectX::XMFLOAT3 cameraPosition = { 0.0f, 0.0f, 0.0f };
+    float padding = 0.0f;  // Padding for alignment
 };
 
 // Simple vertex with position and color
