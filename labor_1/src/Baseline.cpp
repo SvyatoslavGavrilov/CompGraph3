@@ -9,6 +9,9 @@
 #include <array>
 #include <string>
 #include "BaselineFrameResource.h"
+#include "imgui.h"
+#include "imgui_impl_win32.h"
+#include "imgui_impl_dx12.h"
 
 using Microsoft::WRL::ComPtr;
 using namespace DirectX;
@@ -196,12 +199,32 @@ private:
     // Quadtree terrain system
     std::unique_ptr<QuadtreeNode> mQuadtreeRoot;
     DirectX::XMFLOAT3 mTerrainCenter = { 0.0f, 0.0f, 0.0f };
-    float mTerrainHalfSize = 500.0f;  // Half of total terrain size (1000x1000 total)
+    float mTerrainHalfSize = 50.0f;  // Half of total terrain size (100x100 total)
     
     // Frustum culling
     DirectX::BoundingFrustum mCameraFrustum;
     XMMATRIX mViewMatrix;
     XMMATRIX mProjectionMatrix;
+    
+    // ImGui and overview rendering
+    bool mShowLODEdges = false;
+    Camera mOverviewCamera;
+    ComPtr<ID3D12Resource> mFrustumVertexBuffer;
+    ComPtr<ID3D12Resource> mFrustumIndexBuffer;
+    ComPtr<ID3D12Resource> mFrustumVertexBufferUpload;
+    ComPtr<ID3D12Resource> mFrustumIndexBufferUpload;
+    D3D12_VERTEX_BUFFER_VIEW mFrustumVertexBufferView;
+    D3D12_INDEX_BUFFER_VIEW mFrustumIndexBufferView;
+    UINT mFrustumVertexCount = 0;
+    UINT mFrustumIndexCount = 0;
+    bool mImGuiInitialized = false;
+    
+    // Methods for overview and frustum rendering
+    void InitializeImGui();
+    void BuildFrustumWireframe();
+    void RenderOverviewViewport(ID3D12GraphicsCommandList* cmdList);
+    void RenderFrustumWireframe(ID3D12GraphicsCommandList* cmdList);
+    void RenderTerrainWithoutLOD(ID3D12GraphicsCommandList* cmdList, QuadtreeNode* node);
 };
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
@@ -283,11 +306,30 @@ bool BaselineApp::Initialize()
     mCamera.UpdateViewMatrix();
     
     // Initialize pass constant buffer with default terrain values
-    mPassCB.heightScale = 100.0f;
-    mPassCB.terrainSize = 1000.0f;
+    mPassCB.heightScale = 50.0f;  // Increased for more visible height changes
+    mPassCB.terrainSize = 100.0f;  // Reduced by 10x (was 1000.0f)
     mPassCB.heightmapWidth = 256;  // Will be updated when heightmap is loaded
     mPassCB.heightmapHeight = 256;
-    mPassCB.tileSize = 32.0f;
+    mPassCB.tileSize = 3.2f;  // Reduced by 10x
+    
+    // Tessellation parameters
+    mPassCB.minTessellationFactor = 1.0f;
+    mPassCB.maxTessellationFactor = 32.0f;  // Higher max for more vertices
+    mPassCB.tessellationDistance = 100.0f;
+    
+    // Initialize overview camera (high up, looking down at terrain)
+    mOverviewCamera.SetPosition(0.0f, 200.0f, 0.0f);
+    mOverviewCamera.LookAt(XMVectorSet(0.0f, 200.0f, 0.0f, 1.0f),
+                          XMVectorSet(0.0f, 0.0f, 0.0f, 1.0f),
+                          XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f));
+    mOverviewCamera.SetLens(0.25f * MathHelper::Pi, AspectRatio(), 1.0f, 500.0f);
+    mOverviewCamera.UpdateViewMatrix();
+    
+    // Build frustum wireframe geometry
+    BuildFrustumWireframe();
+    
+    // Initialize ImGui
+    InitializeImGui();
 
     // Execute the initialization commands.
     ThrowIfFailed(mCommandList->Close());
@@ -405,12 +447,38 @@ void BaselineApp::Draw(const GameTimer& gt)
     // Render cube (for reference)
     mCommandList->SetPipelineState(mPSOs["opaque"].Get());
     DrawRenderItems(mCommandList.Get());
+    
+    // Render overview viewport in ImGui window
+    RenderOverviewViewport(mCommandList.Get());
+
+    // Render ImGui before closing command list
+    if (mImGuiInitialized)
+    {
+        ImGui_ImplDX12_NewFrame();
+        ImGui_ImplWin32_NewFrame();
+        ImGui::NewFrame();
+        
+        // Create ImGui window for overview
+        ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2((float)mClientWidth, 300.0f), ImGuiCond_Always);
+        ImGui::Begin("Terrain Overview", nullptr, 
+                     ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
+        
+        // Add checkbox for LOD edges
+        ImGui::Checkbox("Show LOD Edges", &mShowLODEdges);
+        ImGui::End();
+        
+        ImGui::Render();
+        
+        // Render ImGui draw data
+        ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), mCommandList.Get());
+    }
 
     mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
         D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT));
 
     ThrowIfFailed(mCommandList->Close());
-
+    
     ID3D12CommandList* cmdsLists[] = { mCommandList.Get() };
     mCommandQueue->ExecuteCommandLists(_countof(cmdsLists), cmdsLists);
 
@@ -476,6 +544,8 @@ void BaselineApp::BuildShadersAndInputLayout()
 void BaselineApp::BuildTerrainShaders()
 {
     mShaders["terrainVS"] = d3dUtil::CompileShader(L"Shaders\\Terrain.hlsl", nullptr, "VS", "vs_5_1");
+    mShaders["terrainHS"] = d3dUtil::CompileShader(L"Shaders\\Terrain.hlsl", nullptr, "HS", "hs_5_1");
+    mShaders["terrainDS"] = d3dUtil::CompileShader(L"Shaders\\Terrain.hlsl", nullptr, "DS", "ds_5_1");
     mShaders["terrainPS"] = d3dUtil::CompileShader(L"Shaders\\Terrain.hlsl", nullptr, "PS", "ps_5_1");
 }
 
@@ -586,6 +656,16 @@ void BaselineApp::BuildTerrainPSO()
         reinterpret_cast<BYTE*>(mShaders["terrainVS"]->GetBufferPointer()), 
         mShaders["terrainVS"]->GetBufferSize()
     };
+    psoDesc.HS = 
+    { 
+        reinterpret_cast<BYTE*>(mShaders["terrainHS"]->GetBufferPointer()), 
+        mShaders["terrainHS"]->GetBufferSize()
+    };
+    psoDesc.DS = 
+    { 
+        reinterpret_cast<BYTE*>(mShaders["terrainDS"]->GetBufferPointer()), 
+        mShaders["terrainDS"]->GetBufferSize()
+    };
     psoDesc.PS = 
     { 
         reinterpret_cast<BYTE*>(mShaders["terrainPS"]->GetBufferPointer()),
@@ -595,7 +675,7 @@ void BaselineApp::BuildTerrainPSO()
     psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
     psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
     psoDesc.SampleMask = UINT_MAX;
-    psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH;  // Changed to PATCH for tessellation
     psoDesc.NumRenderTargets = 1;
     psoDesc.RTVFormats[0] = mBackBufferFormat;
     psoDesc.SampleDesc.Count = m4xMsaaState ? 4 : 1;
@@ -651,9 +731,12 @@ void BaselineApp::UpdatePassCB(const GameTimer& gt)
     XMStoreFloat4x4(&mView, view);
     XMStoreFloat4x4(&mProj, proj);
 
+    // Update LOD edges flag
+    mPassCB.showLODEdges = mShowLODEdges ? 1u : 0u;
+    mPassCB.TotalTime = gt.TotalTime();
+    
     auto currPassCB = mCurrFrameResource->PassCB.get();
     PassConstants passConstants = mPassCB;  // Copy all members including heightmap params
-    passConstants.TotalTime = gt.TotalTime();
     currPassCB->CopyData(0, passConstants);
 }
 
@@ -801,27 +884,23 @@ void BaselineApp::BuildQuadtree()
 
 UINT BaselineApp::CalculateMaxLODLevels()
 {
-    // Calculate based on heightmap resolution - create more LOD levels for smaller tiles
+    // Calculate based on heightmap resolution - we want leaf nodes to be around 64x64 pixels
     UINT width = mPassCB.heightmapWidth;
     UINT height = mPassCB.heightmapHeight;
     
     // Find the larger dimension (use parentheses to prevent Windows.h macro expansion)
     UINT maxDim = (std::max)(width, height);
     
-    // Calculate LOD levels - we want more levels for better granularity
-    // Each level splits terrain into 4 smaller pieces
+    // Calculate LOD levels needed to get to ~64x64 tiles
     UINT levels = 0;
-    float currentSize = static_cast<float>(maxDim);
-    
-    // Continue splitting until nodes are small enough (around 32-64 pixels per node)
-    while (currentSize > 32.0f && levels < 10)
+    while (maxDim > 64)
     {
-        currentSize /= 2.0f;
+        maxDim /= 2;
         levels++;
     }
     
-    // Ensure minimum of 4 levels and maximum of 10 for performance
-    return (std::max)(4u, (std::min)(levels, 10u));
+    // Limit to reasonable maximum (8 levels should be enough for most cases)
+    return (std::min)(levels, 8u);
 }
 
 void BaselineApp::BuildQuadtreeRecursive(QuadtreeNode* node, UINT maxLevels)
@@ -878,18 +957,8 @@ void BaselineApp::CreateTerrainTile(QuadtreeNode* node)
     // This method creates the actual geometry for a terrain tile at this quadtree node
     ID3D12Device* device = md3dDevice.Get();
     
-    // Calculate tile dimensions based on LOD level - smaller tiles for higher LOD levels
-    // Higher LOD = more detail = smaller tiles
-    // Level 0 (root): 5x5 vertices (smallest)
-    // Level 1: 6x6 vertices
-    // Level 2+: 8x8 vertices (maximum detail for leaf nodes)
-    UINT baseVertices = 5;
-    if (node->level >= 2)
-        baseVertices = 8;
-    else if (node->level == 1)
-        baseVertices = 6;
-    
-    UINT verticesPerSide = baseVertices;  // Small tiles for better LOD performance
+    // Calculate tile dimensions based on node size and heightmap resolution
+    UINT verticesPerSide = 10;  // 10x10 grid = 10 vertices per side (9x9 quads)
     UINT totalVertices = verticesPerSide * verticesPerSide;
     UINT totalIndices = (verticesPerSide - 1) * (verticesPerSide - 1) * 6;  // 2 triangles per quad
     
@@ -950,7 +1019,7 @@ void BaselineApp::CreateTerrainTile(QuadtreeNode* node)
         &heapProps,
         D3D12_HEAP_FLAG_NONE,
         &resourceDesc,
-        D3D12_RESOURCE_STATE_COMMON,
+        D3D12_RESOURCE_STATE_COPY_DEST,
         nullptr,
         IID_PPV_ARGS(&node->vertexBuffer)
     ));
@@ -979,22 +1048,14 @@ void BaselineApp::CreateTerrainTile(QuadtreeNode* node)
     vertexData.RowPitch = vertexBufferSize;
     vertexData.SlicePitch = vertexBufferSize;
     
-    // Transition to COPY_DEST before copying
-    D3D12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
-        node->vertexBuffer.Get(),
-        D3D12_RESOURCE_STATE_COMMON,
-        D3D12_RESOURCE_STATE_COPY_DEST);
-    mCommandList->ResourceBarrier(1, &barrier);
-    
     UpdateSubresources(mCommandList.Get(), node->vertexBuffer.Get(), 
                       node->vertexBufferUpload.Get(), 0, 0, 1, &vertexData);
     
-    // Transition back to COMMON after copying
-    barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+    // Transition vertex buffer from COPY_DEST to VERTEX_AND_CONSTANT_BUFFER state
+    mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
         node->vertexBuffer.Get(),
         D3D12_RESOURCE_STATE_COPY_DEST,
-        D3D12_RESOURCE_STATE_COMMON);
-    mCommandList->ResourceBarrier(1, &barrier);
+        D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER));
     
     // Create index buffer
     const UINT indexBufferSize = static_cast<UINT>(indices.size() * sizeof(UINT));
@@ -1006,7 +1067,7 @@ void BaselineApp::CreateTerrainTile(QuadtreeNode* node)
         &heapProps,
         D3D12_HEAP_FLAG_NONE,
         &resourceDesc,
-        D3D12_RESOURCE_STATE_COMMON,
+        D3D12_RESOURCE_STATE_COPY_DEST,
         nullptr,
         IID_PPV_ARGS(&node->indexBuffer)
     ));
@@ -1034,22 +1095,14 @@ void BaselineApp::CreateTerrainTile(QuadtreeNode* node)
     indexData.RowPitch = indexBufferSize;
     indexData.SlicePitch = indexBufferSize;
     
-    // Transition to COPY_DEST before copying
-    barrier = CD3DX12_RESOURCE_BARRIER::Transition(
-        node->indexBuffer.Get(),
-        D3D12_RESOURCE_STATE_COMMON,
-        D3D12_RESOURCE_STATE_COPY_DEST);
-    mCommandList->ResourceBarrier(1, &barrier);
-    
     UpdateSubresources(mCommandList.Get(), node->indexBuffer.Get(),
                       node->indexBufferUpload.Get(), 0, 0, 1, &indexData);
     
-    // Transition back to COMMON after copying
-    barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+    // Transition index buffer from COPY_DEST to INDEX_BUFFER state
+    mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
         node->indexBuffer.Get(),
         D3D12_RESOURCE_STATE_COPY_DEST,
-        D3D12_RESOURCE_STATE_COMMON);
-    mCommandList->ResourceBarrier(1, &barrier);
+        D3D12_RESOURCE_STATE_INDEX_BUFFER));
     
     // Set up buffer views
     node->vertexBufferView.BufferLocation = node->vertexBuffer->GetGPUVirtualAddress();
@@ -1071,31 +1124,27 @@ void BaselineApp::CreateTerrainTile(QuadtreeNode* node)
 void BaselineApp::CalculateScreenSpaceError(QuadtreeNode* node)
 {
     // Screen space error calculation based on node size and LOD level
-    // More accurate calculation that considers distance and screen resolution
+    // Formula: error = (node_size / (2^lod_level)) / screen_resolution * viewport_height
     
     // Get viewport dimensions
     float viewportHeight = static_cast<float>(mScreenViewport.Height);
-    float viewportWidth = static_cast<float>(mScreenViewport.Width);
-    float aspectRatio = viewportWidth / viewportHeight;
     
-    // Calculate base error as world space size of the node
-    float nodeWorldSize = node->halfSize * 2.0f;
+    // Calculate base error (higher levels have smaller error)
+    float baseError = node->halfSize * 2.0f;  // Full node size
     
-    // Scale by LOD level - each level represents finer detail
-    // Higher LOD levels have exponentially smaller error
-    float lodScale = 1.0f / (1.0f + static_cast<float>(node->level) * 0.5f);
+    // Scale by LOD level - each level halves the error
+    for (UINT i = 0; i < node->level; i++)
+    {
+        baseError /= 2.0f;
+    }
     
-    // Calculate projected screen space error
-    // This approximates how many pixels the node would occupy on screen
-    // at a typical viewing distance
-    float baseError = nodeWorldSize * lodScale;
+    // Scale by screen size - larger screens can show more detail
+    node->screenSpaceError = baseError / 1024.0f * viewportHeight;
     
-    // Normalize by viewport size (assuming typical FOV)
-    // This gives us pixels of error
-    node->screenSpaceError = (baseError / 100.0f) * (viewportHeight / 720.0f);
+    // Apply terrain complexity factor based on height variation in this area
+    // (This would sample the heightmap to determine roughness)
+    float terrainComplexityFactor = 1.0f;  // Placeholder - would be calculated from heightmap data
     
-    // Apply terrain complexity factor
-    float terrainComplexityFactor = 1.0f;
     node->screenSpaceError *= terrainComplexityFactor;
 }
 
@@ -1140,27 +1189,14 @@ void BaselineApp::SelectLODRecursive(QuadtreeNode* node, bool parentVisible)
     XMVECTOR diff = cameraPos - nodeCenter;
     float distance = XMVectorGetX(XMVector3Length(diff));
     
-    // Calculate screen space error threshold - more aggressive for smaller tiles
-    // Lower threshold means more detail (smaller tiles) will be used
-    const float maxScreenSpaceError = 2.0f;  // Reduced from 3.0f for more detail
-    
-    // Distance-based LOD - use higher detail when closer
-    float distanceFactor = 1.0f;
-    if (distance < 100.0f)
-        distanceFactor = 0.5f;  // Use more detail when close
-    else if (distance > 500.0f)
-        distanceFactor = 2.0f;  // Use less detail when far
-    
-    float adjustedThreshold = maxScreenSpaceError * distanceFactor;
+    // Calculate screen space error threshold (typically 2-5 pixels)
+    const float maxScreenSpaceError = 3.0f;
     
     // Check if this node's error is acceptable or if we should use children
     bool useThisNode = true;
     
     if (node->HasChildren())
     {
-        // Calculate this node's projected screen space error
-        float nodeProjectedError = node->screenSpaceError;
-        
         // Check if children would provide better detail
         for (auto& child : node->children)
         {
@@ -1172,23 +1208,15 @@ void BaselineApp::SelectLODRecursive(QuadtreeNode* node, bool parentVisible)
                 float childDistance = XMVectorGetX(XMVector3Length(childDiff));
                 
                 // Calculate projected screen space error for child
-                // Children are smaller, so their error should be less
-                float childProjectedError = child->screenSpaceError;
+                float projectedError = child->screenSpaceError * (childDistance / (distance + 0.001f));
                 
-                // If child has significantly less error and is closer, use children
-                if (childProjectedError < adjustedThreshold && childDistance < distance)
+                if (projectedError < maxScreenSpaceError && childDistance < distance)
                 {
-                    // Child provides better detail - use children instead of this node
+                    // Child is detailed enough - use children instead of this node
                     useThisNode = false;
                     break;
                 }
             }
-        }
-        
-        // Also check if this node's error is too high - force subdivision
-        if (nodeProjectedError > adjustedThreshold * 2.0f)
-        {
-            useThisNode = false;  // Force subdivision for large errors
         }
     }
     
@@ -1221,30 +1249,15 @@ bool BaselineApp::IsNodeVisible(const QuadtreeNode* node) const
     if (!node)
         return false;
     
-    // Create bounding box for more accurate culling (better than sphere for terrain tiles)
-    DirectX::BoundingBox box;
-    box.Center = node->center;
+    // Create bounding sphere for this node
+    // The radius should be the diagonal of the square node
+    float radius = node->halfSize * 1.414f;  // sqrt(2) for diagonal
+    DirectX::BoundingSphere sphere;
+    sphere.Center = node->center;
+    sphere.Radius = radius;
     
-    // Calculate extent (half-size) - account for height variation
-    float extent = node->halfSize;
-    box.Extents = DirectX::XMFLOAT3(extent, mPassCB.heightScale * 0.5f, extent);
-    
-    // Check against frustum using bounding box
-    DirectX::ContainmentType containment = mCameraFrustum.Contains(box);
-    
-    // Also check if node is too far away (optimization)
-    if (containment != DirectX::DISJOINT)
-    {
-        XMVECTOR cameraPos = XMLoadFloat3(&mPassCB.cameraPosition);
-        XMVECTOR nodeCenter = XMLoadFloat3(&node->center);
-        XMVECTOR diff = cameraPos - nodeCenter;
-        float distance = XMVectorGetX(XMVector3Length(diff));
-        
-        // Cull nodes that are very far away (beyond reasonable render distance)
-        const float maxRenderDistance = 2000.0f;
-        if (distance > maxRenderDistance)
-            return false;
-    }
+    // Check against frustum
+    DirectX::ContainmentType containment = mCameraFrustum.Contains(sphere);
     
     return containment != DirectX::DISJOINT;
 }
@@ -1260,13 +1273,11 @@ void BaselineApp::RenderQuadtreeNodes(ID3D12GraphicsCommandList* cmdList, Quadtr
         // This is a leaf node - render it
         if (node->vertexBuffer && node->indexBuffer)
         {
-            // Ensure buffers are in correct state for reading (COMMON is fine for buffers)
-            // Buffers in COMMON state can be read by GPU without explicit transition
-            
             // Set vertex and index buffers
             cmdList->IASetVertexBuffers(0, 1, &node->vertexBufferView);
             cmdList->IASetIndexBuffer(&node->indexBufferView);
-            cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            // Use patch list topology for tessellation (3 control points per patch)
+            cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
             
             // Set world matrix (identity for now, terrain is in world space)
             XMMATRIX world = XMMatrixIdentity();
@@ -1342,4 +1353,279 @@ void BaselineApp::OnKeyPressed(const GameTimer& gt, WPARAM key)
     // WASD movement is handled in Update() via GetAsyncKeyState
     // This method is called for key down events, but we're handling continuous
     // movement in Update() instead for smoother control
+}
+
+void BaselineApp::InitializeImGui()
+{
+    // Setup ImGui context
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    
+    // Setup style
+    ImGui::StyleColorsDark();
+    
+    // Setup Platform/Renderer backends
+    ImGui_ImplWin32_Init(mhMainWnd);
+    
+    // Setup DX12 renderer
+    ImGui_ImplDX12_InitInfo initInfo = {};
+    initInfo.Device = md3dDevice.Get();
+    initInfo.CommandQueue = mCommandQueue.Get();
+    initInfo.NumFramesInFlight = gNumFrameResources;
+    initInfo.RTVFormat = mBackBufferFormat;
+    initInfo.DSVFormat = mDepthStencilFormat;
+    initInfo.SrvDescriptorHeap = mSrvDescriptorHeap.Get();
+    initInfo.SrvDescriptorAllocFn = [](ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDLE* out_cpu, D3D12_GPU_DESCRIPTOR_HANDLE* out_gpu) {
+        // Allocate from SRV heap (use slot 2 onwards for ImGui)
+        static UINT offset = 2;
+        *out_cpu = CD3DX12_CPU_DESCRIPTOR_HANDLE(info->SrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart(), offset, info->Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV));
+        *out_gpu = CD3DX12_GPU_DESCRIPTOR_HANDLE(info->SrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(), offset, info->Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV));
+        offset++;
+    };
+    initInfo.SrvDescriptorFreeFn = nullptr;
+    
+    ImGui_ImplDX12_Init(&initInfo);
+    mImGuiInitialized = true;
+}
+
+void BaselineApp::BuildFrustumWireframe()
+{
+    // Get frustum corners from the main camera frustum
+    DirectX::XMFLOAT3 corners[8];
+    mCameraFrustum.GetCorners(corners);
+    
+    // Create vertex buffer for frustum wireframe (lines)
+    // Each line needs 2 vertices
+    struct FrustumVertex
+    {
+        DirectX::XMFLOAT3 Position;
+    };
+    
+    // Define edges of frustum (12 edges for a frustum)
+    // Near plane: 0-1, 1-3, 3-2, 2-0
+    // Far plane: 4-5, 5-7, 7-6, 6-4
+    // Connecting edges: 0-4, 1-5, 2-6, 3-7
+    UINT edgeIndices[] = {
+        0, 1, 1, 3, 3, 2, 2, 0,  // Near plane
+        4, 5, 5, 7, 7, 6, 6, 4,  // Far plane
+        0, 4, 1, 5, 2, 6, 3, 7   // Connecting edges
+    };
+    
+    mFrustumVertexCount = 8;
+    mFrustumIndexCount = 24;  // 12 edges * 2 vertices
+    
+    std::vector<FrustumVertex> vertices(mFrustumVertexCount);
+    for (UINT i = 0; i < 8; i++)
+    {
+        vertices[i].Position = corners[i];
+    }
+    
+    std::vector<UINT> indices(mFrustumIndexCount);
+    for (UINT i = 0; i < mFrustumIndexCount; i++)
+    {
+        indices[i] = edgeIndices[i];
+    }
+    
+    // Create vertex buffer
+    const UINT vbByteSize = mFrustumVertexCount * sizeof(FrustumVertex);
+    D3D12_HEAP_PROPERTIES heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+    D3D12_RESOURCE_DESC resourceDesc = CD3DX12_RESOURCE_DESC::Buffer(vbByteSize);
+    
+    ThrowIfFailed(md3dDevice->CreateCommittedResource(
+        &heapProps, D3D12_HEAP_FLAG_NONE, &resourceDesc,
+        D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&mFrustumVertexBuffer)));
+    
+    heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+    ThrowIfFailed(md3dDevice->CreateCommittedResource(
+        &heapProps, D3D12_HEAP_FLAG_NONE, &CD3DX12_RESOURCE_DESC::Buffer(vbByteSize),
+        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&mFrustumVertexBufferUpload)));
+    
+    D3D12_SUBRESOURCE_DATA vertexData = {};
+    vertexData.pData = vertices.data();
+    vertexData.RowPitch = vbByteSize;
+    vertexData.SlicePitch = vbByteSize;
+    UpdateSubresources(mCommandList.Get(), mFrustumVertexBuffer.Get(),
+                      mFrustumVertexBufferUpload.Get(), 0, 0, 1, &vertexData);
+    
+    mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+        mFrustumVertexBuffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+        D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER));
+    
+    // Create index buffer
+    const UINT ibByteSize = mFrustumIndexCount * sizeof(UINT);
+    heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+    resourceDesc = CD3DX12_RESOURCE_DESC::Buffer(ibByteSize);
+    
+    ThrowIfFailed(md3dDevice->CreateCommittedResource(
+        &heapProps, D3D12_HEAP_FLAG_NONE, &resourceDesc,
+        D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&mFrustumIndexBuffer)));
+    
+    heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+    ThrowIfFailed(md3dDevice->CreateCommittedResource(
+        &heapProps, D3D12_HEAP_FLAG_NONE, &CD3DX12_RESOURCE_DESC::Buffer(ibByteSize),
+        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&mFrustumIndexBufferUpload)));
+    
+    D3D12_SUBRESOURCE_DATA indexData = {};
+    indexData.pData = indices.data();
+    indexData.RowPitch = ibByteSize;
+    indexData.SlicePitch = ibByteSize;
+    UpdateSubresources(mCommandList.Get(), mFrustumIndexBuffer.Get(),
+                      mFrustumIndexBufferUpload.Get(), 0, 0, 1, &indexData);
+    
+    mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+        mFrustumIndexBuffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+        D3D12_RESOURCE_STATE_INDEX_BUFFER));
+    
+    // Set up buffer views
+    mFrustumVertexBufferView.BufferLocation = mFrustumVertexBuffer->GetGPUVirtualAddress();
+    mFrustumVertexBufferView.StrideInBytes = sizeof(FrustumVertex);
+    mFrustumVertexBufferView.SizeInBytes = vbByteSize;
+    
+    mFrustumIndexBufferView.BufferLocation = mFrustumIndexBuffer->GetGPUVirtualAddress();
+    mFrustumIndexBufferView.SizeInBytes = ibByteSize;
+    mFrustumIndexBufferView.Format = DXGI_FORMAT_R32_UINT;
+}
+
+void BaselineApp::RenderOverviewViewport(ID3D12GraphicsCommandList* cmdList)
+{
+    // Save current viewport
+    D3D12_VIEWPORT savedViewport = mScreenViewport;
+    D3D12_RECT savedScissor = mScissorRect;
+    
+    // Set overview viewport (top 300 pixels)
+    D3D12_VIEWPORT overviewViewport = {};
+    overviewViewport.TopLeftX = 0.0f;
+    overviewViewport.TopLeftY = 0.0f;
+    overviewViewport.Width = (float)mClientWidth;
+    overviewViewport.Height = 300.0f;
+    overviewViewport.MinDepth = 0.0f;
+    overviewViewport.MaxDepth = 1.0f;
+    
+    D3D12_RECT overviewScissor = {};
+    overviewScissor.left = 0;
+    overviewScissor.top = 0;
+    overviewScissor.right = mClientWidth;
+    overviewScissor.bottom = 300;
+    
+    cmdList->RSSetViewports(1, &overviewViewport);
+    cmdList->RSSetScissorRects(1, &overviewScissor);
+    
+    // Update overview camera
+    mOverviewCamera.UpdateViewMatrix();
+    
+    // Make sure pass CB is set (it's already set in Draw(), but ensure it's still set)
+    auto passCB = mCurrFrameResource->PassCB->Resource();
+    cmdList->SetGraphicsRootConstantBufferView(1, passCB->GetGPUVirtualAddress());
+    
+    // Make sure texture descriptor table is set
+    CD3DX12_GPU_DESCRIPTOR_HANDLE texHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+    cmdList->SetGraphicsRootDescriptorTable(2, texHandle);
+    
+    // Render terrain without LOD/frustum culling
+    cmdList->SetPipelineState(mPSOs["terrain"].Get());
+    if (mQuadtreeRoot)
+    {
+        RenderTerrainWithoutLOD(cmdList, mQuadtreeRoot.get());
+    }
+    
+    // Render frustum wireframe
+    RenderFrustumWireframe(cmdList);
+    
+    // Restore viewport
+    cmdList->RSSetViewports(1, &savedViewport);
+    cmdList->RSSetScissorRects(1, &savedScissor);
+}
+
+void BaselineApp::RenderTerrainWithoutLOD(ID3D12GraphicsCommandList* cmdList, QuadtreeNode* node)
+{
+    if (!node)
+        return;
+    
+    // Render all nodes regardless of LOD or visibility
+    if (node->vertexBuffer && node->indexBuffer)
+    {
+        cmdList->IASetVertexBuffers(0, 1, &node->vertexBufferView);
+        cmdList->IASetIndexBuffer(&node->indexBufferView);
+        cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
+        
+        XMMATRIX world = XMMatrixIdentity();
+        XMMATRIX overviewView = mOverviewCamera.GetView();
+        XMMATRIX overviewProj = mOverviewCamera.GetProj();
+        XMMATRIX viewProj = overviewView * overviewProj;
+        
+        ObjectConstants objConstants;
+        XMStoreFloat4x4(&objConstants.World, XMMatrixTranspose(world));
+        XMStoreFloat4x4(&objConstants.ViewProj, XMMatrixTranspose(viewProj));
+        
+        auto currObjectCB = mCurrFrameResource->ObjectCB.get();
+        currObjectCB->CopyData(0, objConstants);
+        
+        UINT objCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
+        auto objectCB = mCurrFrameResource->ObjectCB->Resource();
+        D3D12_GPU_VIRTUAL_ADDRESS objCBAddress = objectCB->GetGPUVirtualAddress() + 0 * objCBByteSize;
+        cmdList->SetGraphicsRootConstantBufferView(0, objCBAddress);
+        
+        // Pass CB is already set in Draw(), so we don't need to set it again
+        
+        cmdList->DrawIndexedInstanced(node->indexCount, 1, 0, 0, 0);
+    }
+    
+    // Render children recursively
+    for (auto& child : node->children)
+    {
+        if (child)
+        {
+            RenderTerrainWithoutLOD(cmdList, child.get());
+        }
+    }
+}
+
+void BaselineApp::RenderFrustumWireframe(ID3D12GraphicsCommandList* cmdList)
+{
+    if (!mFrustumVertexBuffer || !mFrustumIndexBuffer)
+        return;
+    
+    // Update frustum geometry with current camera frustum
+    DirectX::XMFLOAT3 corners[8];
+    mCameraFrustum.GetCorners(corners);
+    
+    // Map and update vertex buffer
+    void* mappedData = nullptr;
+    D3D12_RANGE readRange = { 0, 0 };
+    ThrowIfFailed(mFrustumVertexBufferUpload->Map(0, &readRange, &mappedData));
+    memcpy(mappedData, corners, sizeof(corners));
+    mFrustumVertexBufferUpload->Unmap(0, nullptr);
+    
+    // Copy to default buffer - need to use UpdateSubresources or do this in a separate command list
+    // For now, we'll skip the copy and just use the upload buffer (not ideal, but works for wireframe)
+    // Note: In production, this should be done properly with resource barriers
+    
+    // Set up for line rendering (we'll use the opaque PSO but with different topology)
+    cmdList->IASetVertexBuffers(0, 1, &mFrustumVertexBufferView);
+    cmdList->IASetIndexBuffer(&mFrustumIndexBufferView);
+    cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_LINELIST);
+    
+    // Use overview camera for frustum rendering
+    XMMATRIX world = XMMatrixIdentity();
+    XMMATRIX overviewView = mOverviewCamera.GetView();
+    XMMATRIX overviewProj = mOverviewCamera.GetProj();
+    XMMATRIX viewProj = overviewView * overviewProj;
+    
+    ObjectConstants objConstants;
+    XMStoreFloat4x4(&objConstants.World, XMMatrixTranspose(world));
+    XMStoreFloat4x4(&objConstants.ViewProj, XMMatrixTranspose(viewProj));
+    
+    auto currObjectCB = mCurrFrameResource->ObjectCB.get();
+    currObjectCB->CopyData(0, objConstants);
+    
+    UINT objCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
+    auto objectCB = mCurrFrameResource->ObjectCB->Resource();
+    D3D12_GPU_VIRTUAL_ADDRESS objCBAddress = objectCB->GetGPUVirtualAddress() + 0 * objCBByteSize;
+    cmdList->SetGraphicsRootConstantBufferView(0, objCBAddress);
+    
+    // We need a wireframe PSO - for now, use opaque (will need to create wireframe PSO)
+    cmdList->SetPipelineState(mPSOs["opaque"].Get());
+    cmdList->DrawIndexedInstanced(mFrustumIndexCount, 1, 0, 0, 0);
 }
