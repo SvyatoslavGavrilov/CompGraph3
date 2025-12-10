@@ -24,17 +24,8 @@ struct PassConstants
     float tileSize = 32.0f;               // Size of each terrain tile
     
     // Camera position for LOD calculations
-    float padding0 = 0.0f;                   // Padding to align to 16-byte boundary
     DirectX::XMFLOAT3 cameraPosition = { 0.0f, 0.0f, 0.0f };
-    
-    // Tessellation parameters
-    float minTessellationFactor = 1.0f;      // Minimum tessellation factor
-    float maxTessellationFactor = 32.0f;     // Maximum tessellation factor
-    float tessellationDistance = 100.0f;     // Distance for tessellation calculation
-    
-    // LOD edge rendering
-    UINT showLODEdges = 0;                   // Flag to show LOD tile edges
-    float padding1[3] = { 0.0f, 0.0f, 0.0f }; // Padding for alignment
+    float padding = 0.0f;  // Padding for alignment
 };
 
 // Simple vertex with position and color
