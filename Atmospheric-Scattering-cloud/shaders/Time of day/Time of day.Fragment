@@ -1,0 +1,61 @@
+#version 450 core
+
+#include "Time of day.conf"
+
+#include "Common.glsli"
+#include "Math.glsli"
+#include "PhaseFunctions.glsli"
+
+#include "shader/Atmospheric.glsli"
+#include "shader/Cloud.glsli"
+
+// IN
+in vec2 vTexcoords;
+in vec3 vNormalW;
+
+// OUT
+out vec4 fragColor;
+
+uniform float uTime;
+uniform float uAltitude;
+uniform float uTurbidity;
+uniform float uCloudSpeed;
+uniform float uCloudDensity;
+uniform float uSunRadius;
+uniform float uSunRadiance;
+uniform vec3 uSunIntensity;
+uniform vec3 uSunDir;
+uniform vec3 uCameraPosition;
+
+void main() 
+{
+    vec3 mieLambda = ComputeCoefficientLinearMie(mWaveLength, mMieColor, uTurbidity);
+    vec3 rayleight = ComputeCoefficientRayleigh(mWaveLength) * mRayleighColor;
+	vec3 cloud = ComputeCoefficientLinearMie(mWaveLength, mCloudColor, mCloudTurbidity);
+
+    ScatteringParams setting;
+    setting.mieG = g;
+    setting.sunRadius = uSunRadius;
+    setting.sunRadiance = uSunRadiance;
+    setting.earthRadius = mEarthRadius * mUnitDistance;
+    setting.earthCenter = vec3(0, -setting.earthRadius, 0);
+    setting.earthAtmTopRadius = mEarthAtmoRadius * mUnitDistance;
+	setting.waveLambdaMie = mieLambda;
+	setting.waveLambdaOzone = mOzoneScatteringCoeff * mOzoneMass;
+	setting.waveLambdaRayleigh = rayleight;
+	setting.mieHeight = mMieHeight * mUnitDistance;
+	setting.rayleighHeight = mRayleighHeight * mUnitDistance;
+
+#if ATM_CLOUD_ENABLE
+    setting.cloud = uCloudDensity;
+    setting.cloudTop = 5.2 * mUnitDistance;
+    setting.cloudBottom = 5 * mUnitDistance;
+    setting.clouddir = vec3(1315.7, 0, -3000) * uCloudSpeed;
+    setting.cloudLambda = cloud;
+#endif
+
+    vec3 L = -uSunDir;
+    vec3 V = normalize(-vNormalW);
+    vec3 CameraPos = uCameraPosition + vec3(0.0, humanHeight + uAltitude, 0.0);
+    fragColor = ComputeSkyInscattering(setting, CameraPos, V, L);
+}

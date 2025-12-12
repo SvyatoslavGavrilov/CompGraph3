@@ -1,0 +1,47 @@
+#version 450 core
+
+#include "Time of night.conf"
+
+#include "Common.glsli"
+#include "Math.glsli"
+#include "PhaseFunctions.glsli"
+
+#include "shader/Atmospheric.glsli"
+
+// IN
+in vec2 vTexcoords;
+in vec3 vNormalW;
+
+// OUT
+out vec4 fragColor;
+
+uniform float uTime;
+uniform float uTurbidity;
+uniform float uSunRadius;
+uniform float uSunRadiance;
+uniform vec3 uSunIntensity;
+uniform vec3 uSunDir;
+uniform vec3 uCameraPosition;
+
+void main() 
+{
+    vec3 L = -uSunDir;
+    vec3 V = normalize(-vNormalW);
+
+    vec3 sunColor = vec3(154.0/255);
+    vec3 mieColor = mMieColor * sunColor;
+    vec3 mieLambda = ComputeCoefficientLinearMie(mNightWaveLength, mieColor, uTurbidity);
+    vec3 rayleight = ComputeCoefficientRayleigh(mNightWaveLength) * mRayleighColor;
+
+	ScatteringParams setting;
+	setting.sunSize = uSunRadius;
+	setting.sunRadiance = uSunRadiance;
+	setting.mieG = mMiePhase;
+	setting.mieHeight = mMieHeight * mUnitDistance;
+	setting.rayleighHeight = mRayleighHeight * mUnitDistance; 
+	setting.waveLambdaMie = mieLambda;
+	setting.waveLambdaRayleigh = rayleight;
+
+	vec4 insctrColor = ComputeSkyScattering(setting, V, L);
+    fragColor = insctrColor;
+}
