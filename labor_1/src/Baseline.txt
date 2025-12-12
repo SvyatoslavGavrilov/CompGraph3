@@ -1,11 +1,11 @@
 //***************************************************************************************
 // Simplified BaselineApp - Rotating Rainbow Cube with Camera Controls
 //***************************************************************************************
-#include "../../Common/d3dApp.h"
-#include "../../Common/MathHelper.h"
-#include "../../Common/UploadBuffer.h"
-#include "../../Common/GeometryGenerator.h"
-#include "../../Common/Camera.h"
+#include "d3dApp.h"
+#include "MathHelper.h"
+#include "UploadBuffer.h"
+#include "GeometryGenerator.h"
+#include "Camera.h"
 #include <array>
 #include <string>
 #include "BaselineFrameResource.h"

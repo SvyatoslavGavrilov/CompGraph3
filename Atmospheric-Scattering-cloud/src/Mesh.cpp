@@ -13,7 +13,7 @@
 #include <GL/glew.h>
 #include <glm/glm.hpp>
 
-#include <tools/gltools.hpp>
+#include "gltools.hpp"
 #include "Mesh.h"
 
 

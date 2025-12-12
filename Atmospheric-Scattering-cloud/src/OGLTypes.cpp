@@ -1,4 +1,4 @@
-#include <GLType/OGLTypes.h>
+#include "OGLTypes.h"
 
 namespace OGLTypes
 {

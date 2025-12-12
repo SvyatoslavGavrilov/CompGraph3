@@ -1,6 +1,6 @@
-#include "GLType/OGLCoreFramebuffer.h"
+#include "OGLCoreFramebuffer.h"
 #include <GL/glew.h>
-#include <GLType/OGLCoreTexture.h>
+#include "OGLCoreTexture.h"
 #include <cassert>
 
 __ImplementSubInterface(OGLCoreFramebuffer, GraphicsFramebuffer)

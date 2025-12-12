@@ -1,4 +1,4 @@
-#include <GLType/GraphicsData.h>
+#include "GraphicsData.h"
 
 __ImplementSubInterface(GraphicsData, rtti::Interface)
 

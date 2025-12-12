@@ -1,0 +1,8 @@
+﻿  bstrlib.c
+  glsw.c
+C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\include\yvals_core.h(23,1): error C1189: #error:  error STL1003: Unexpected compiler, expected C++ compiler.
+  (compiling source file 'external/glsw/bstrlib.c')
+  
+C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.44.35207\include\yvals_core.h(23,1): error C1189: #error:  error STL1003: Unexpected compiler, expected C++ compiler.
+  (compiling source file 'external/glsw/glsw.c')
+  

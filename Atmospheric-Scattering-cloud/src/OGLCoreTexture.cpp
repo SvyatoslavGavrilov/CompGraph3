@@ -1,9 +1,9 @@
 #include <gli/gli.hpp>
-#include <tools/stb_image.h>
-#include <tools/string.h>
-#include <tools/FileUtility.h>
-#include <GLType/OGLTypes.h>
-#include <GLType/OGLCoreTexture.h>
+#include "stb_image.h"
+#include "string.h"
+#include "FileUtility.h"
+#include "OGLTypes.h"
+#include "OGLCoreTexture.h"
 
 __ImplementSubInterface(OGLCoreTexture, GraphicsTexture)
 

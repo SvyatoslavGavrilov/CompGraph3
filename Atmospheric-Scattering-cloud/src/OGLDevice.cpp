@@ -1,10 +1,10 @@
-#include <GLType/OGLDevice.h>
-#include <GLType/OGLGraphicsData.h>
-#include <GLType/OGLCoreGraphicsData.h>
-#include <GLType/OGLTexture.h>
-#include <GLType/OGLCoreTexture.h>
-#include <GLType/OGLFramebuffer.h>
-#include <GLType/OGLCoreFramebuffer.h>
+#include "OGLDevice.h"
+#include "OGLGraphicsData.h"
+#include "OGLCoreGraphicsData.h"
+#include "OGLTexture.h"
+#include "OGLCoreTexture.h"
+#include "OGLFramebuffer.h"
+#include "OGLCoreFramebuffer.h"
 
 __ImplementSubInterface(OGLDevice, GraphicsDevice)
 

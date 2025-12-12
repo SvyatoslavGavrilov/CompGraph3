@@ -29,8 +29,8 @@
 #define NV_LINE_MARKERS 1
 
 #include <GL/glew.h>
-#include <GLType/ProgramManager.h>
-#include <tools/misc.hpp>
+#include "ProgramManager.h"
+#include "misc.hpp"
 #include <cstdarg>
 
 namespace nv_helpers_gl

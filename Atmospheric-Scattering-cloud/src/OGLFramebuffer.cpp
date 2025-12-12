@@ -1,6 +1,6 @@
-#include "GLType/OGLFramebuffer.h"
+#include "OGLFramebuffer.h"
 #include <GL/glew.h>
-#include <GLType/OGLTexture.h>
+#include "OGLTexture.h"
 #include <cassert>
 
 __ImplementSubInterface(OGLFramebuffer, GraphicsFramebuffer)

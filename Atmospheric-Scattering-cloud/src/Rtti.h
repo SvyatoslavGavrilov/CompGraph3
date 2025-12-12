@@ -36,7 +36,7 @@
 // +----------------------------------------------------------------------
 #pragma once
 
-#include <tools/RttiMacros.h>
+#include "RttiMacros.h"
 #include <memory>
 #include <string>
 #include <cassert>

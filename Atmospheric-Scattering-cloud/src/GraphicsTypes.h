@@ -2,7 +2,7 @@
 
 #include <vector>
 #include <memory>
-#include <tools/Rtti.h>
+#include "Rtti.h"
 #include <gli/gli.hpp>
 
 class GraphicsDeviceDesc;

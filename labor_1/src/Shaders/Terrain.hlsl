@@ -135,7 +135,9 @@ PatchTess ConstantHS(InputPatch<VertexOut, 4> patch, uint patchID : SV_Primitive
     // Using 2D distance (X, Z only) matches the CPU-side LOD calculation
     // This ensures consistent behavior between CPU LOD and GPU tessellation
     // 2D distance is sufficient because terrain is mostly flat (Y variation is height, not distance)
-    float2 cameraPos2D = float2(cameraPosition.x, cameraPosition.z);
+    // NOTE: Camera coordinate system has X/Z swapped relative to terrain coordinate system
+    // Camera's forward/back (Z) maps to terrain's left/right (X), and vice versa
+    float2 cameraPos2D = float2(cameraPosition.z, cameraPosition.x);  // Swap axes: camera Z->terrain X, camera X->terrain Z
     float2 patchCenter2D = float2(patchCenter.x, patchCenter.z);
     float distance = length(cameraPos2D - patchCenter2D);
     
@@ -216,7 +218,7 @@ DomainOut DS(PatchTess patchTess, float2 uv : SV_DomainLocation, const OutputPat
     // We use bilinear interpolation to find the position at these coordinates
     //
     // Control point order: [0]=topLeft, [1]=bottomLeft, [2]=bottomRight, [3]=topRight
-    // This matches the index order from CreateTerrainTile in Baseline.cpp
+    // This matches the index order from CreateTerrainTile in labor_1.cpp
     //
     // First interpolation (Y direction - vertical):
     // uv.y ranges from 0 (top) to 1 (bottom)

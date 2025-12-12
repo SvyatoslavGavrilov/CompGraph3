@@ -1,4 +1,4 @@
-#include <GLType/GraphicsTexture.h>
+#include "GraphicsTexture.h"
 #include <GL/glew.h>
 
 __ImplementSubInterface(GraphicsTexture, rtti::Interface)

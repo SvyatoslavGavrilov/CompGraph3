@@ -1,7 +1,7 @@
 #pragma once
 
 #include <GL/glew.h>
-#include <GLType/GraphicsData.h>
+#include "GraphicsData.h"
 
 class OGLGraphicsData final : public GraphicsData
 {

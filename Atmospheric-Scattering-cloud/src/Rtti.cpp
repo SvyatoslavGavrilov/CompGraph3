@@ -35,8 +35,8 @@
 // | OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // +----------------------------------------------------------------------
 
-#include <tools/Rtti.h>
-#include <tools/RttiFactory.h>
+#include "Rtti.h"
+#include "RttiFactory.h"
 #include <cassert>
 
 using namespace rtti;

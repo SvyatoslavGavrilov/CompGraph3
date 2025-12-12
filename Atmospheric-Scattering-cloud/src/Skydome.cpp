@@ -11,11 +11,11 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/transform.hpp>
 
-#include <tools/TCamera.h>
-#include <tools/gltools.hpp>
-#include <tools/Timer.hpp>
-#include <GLType/ProgramShader.h>
-#include <GLType/OGLCoreTexture.h>
+#include "TCamera.h"
+#include "gltools.hpp"
+#include "Timer.hpp"
+#include "ProgramShader.h"
+#include "OGLCoreTexture.h"
 #include "Mesh.h"
 #include "Skydome.h"
 

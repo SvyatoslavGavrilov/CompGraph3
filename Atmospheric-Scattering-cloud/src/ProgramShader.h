@@ -2,7 +2,7 @@
 
 #include <GL/glew.h>
 #include <glm/glm.hpp>
-#include <Math/Common.h>
+#include "Common.h"
 #include <string>
 #include <GraphicsTypes.h>
 #include <vector>

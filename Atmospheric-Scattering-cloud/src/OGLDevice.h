@@ -1,6 +1,6 @@
 #pragma once
 
-#include <GLType/GraphicsDevice.h>
+#include "GraphicsDevice.h"
 
 class OGLDevice final : public GraphicsDevice
 {

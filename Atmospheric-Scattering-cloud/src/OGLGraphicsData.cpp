@@ -1,5 +1,5 @@
-#include <GLType/OGLGraphicsData.h>
-#include <GLType/OGLTypes.h>
+#include "OGLGraphicsData.h"
+#include "OGLTypes.h"
 #include <cassert>
 
 __ImplementSubInterface(OGLGraphicsData, GraphicsData)

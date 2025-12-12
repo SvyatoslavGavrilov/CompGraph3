@@ -1,5 +1,5 @@
 #include "BaseMaterial.h"
-#include <tools/gltools.hpp>
+#include "gltools.hpp"
 
 void BaseMaterial::destroy()
 {

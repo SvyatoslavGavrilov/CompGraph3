@@ -38,7 +38,7 @@
 
 #include <vector>
 #include <map>
-#include <tools/Singleton.h>
+#include "Singleton.h"
 
 namespace rtti
 {

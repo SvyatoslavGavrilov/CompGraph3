@@ -1,7 +1,7 @@
 #pragma once
 
 #include <GraphicsTypes.h>
-#include <tools/Rtti.h>
+#include "Rtti.h"
 
 class GraphicsAttachmentBinding final
 {

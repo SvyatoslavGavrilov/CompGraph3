@@ -1,6 +1,6 @@
 #pragma once
 
-#include <tools/Rtti.h>
+#include "Rtti.h"
 #include <string>
 
 namespace gamecore

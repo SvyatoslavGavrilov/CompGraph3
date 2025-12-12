@@ -1,4 +1,4 @@
-#include <GLType/GraphicsDevice.h>
+#include "GraphicsDevice.h"
 
 __ImplementSubInterface(GraphicsDevice, rtti::Interface)
 

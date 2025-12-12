@@ -3,8 +3,8 @@
 #include <GL/glew.h>
 #include <string>
 #include <GraphicsTypes.h>
-#include <tools/Rtti.h>
-#include <GLType/GraphicsTexture.h>
+#include "Rtti.h"
+#include "GraphicsTexture.h"
 
 class OGLTexture final : public GraphicsTexture
 {

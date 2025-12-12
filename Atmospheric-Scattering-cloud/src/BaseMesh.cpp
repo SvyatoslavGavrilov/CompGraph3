@@ -1,5 +1,5 @@
 #include "BaseMesh.h"
-#include <tools/gltools.hpp>
+#include "gltools.hpp"
 
 void BaseMesh::initialize()
 {
