@@ -1,5 +1,5 @@
 //***************************************************************************************
-// Simplified Labor4App - Rotating Rainbow Cube with Camera Controls
+// Simplified BaselineApp - Rotating Rainbow Cube with Camera Controls
 //***************************************************************************************
 #include "d3dApp.h"
 #include "MathHelper.h"
@@ -8,10 +8,10 @@
 #include "Camera.h"
 #include <array>
 #include <string>
-#include "labor_4FrameResource.h"
-#include "imgui.h"
+#include "BaselineFrameResource.h"
 #include "imgui_impl_dx12.h"
 #include "imgui_impl_win32.h"
+#include "imgui.h"
 
 using Microsoft::WRL::ComPtr;
 using namespace DirectX;
@@ -115,13 +115,13 @@ struct RenderItem
     int BaseVertexLocation = 0;
 };
 
-class Labor4App : public D3DApp
+class BaselineApp : public D3DApp
 {
 public:
-    Labor4App(HINSTANCE hInstance);
-    Labor4App(const Labor4App& rhs) = delete;
-    Labor4App& operator=(const Labor4App& rhs) = delete;
-    ~Labor4App();
+    BaselineApp(HINSTANCE hInstance);
+    BaselineApp(const BaselineApp& rhs) = delete;
+    BaselineApp& operator=(const BaselineApp& rhs) = delete;
+    ~BaselineApp();
 
     virtual bool Initialize()override;
 
@@ -168,21 +168,10 @@ private:
     void SelectLODRecursive(QuadtreeNode* node, bool parentVisible);
     bool IsNodeVisible(const QuadtreeNode* node) const;
     void ResetRenderFlags(QuadtreeNode* node);
-    
-    // Atmosphere rendering
-    void InitializeAtmosphere();
-    void BuildAtmosphereShaders();
-    void BuildAtmospherePSO();
-    void BuildAtmosphereRootSignature();
-    void BuildSkyDomeGeometry();
-    void RenderAtmosphere(ID3D12GraphicsCommandList* cmdList);
-    void RenderAtmosphereGUI();
-    void UpdateAtmosphereCB();
-    void UpdateTerrainAtmosphereCB();
 
 private:
-    std::vector<std::unique_ptr<Labor4FrameResource>> mFrameResources;
-    Labor4FrameResource* mCurrFrameResource = nullptr;
+    std::vector<std::unique_ptr<BaselineFrameResource>> mFrameResources;
+    BaselineFrameResource* mCurrFrameResource = nullptr;
     int mCurrFrameResourceIndex = 0;
 
     ComPtr<ID3D12RootSignature> mRootSignature = nullptr;
@@ -218,9 +207,6 @@ private:
     UINT mHeightmapWidth = 0;
     UINT mHeightmapHeight = 0;
     
-    // IMGUI descriptor heap
-    ComPtr<ID3D12DescriptorHeap> mImGuiDescriptorHeap;
-    
     // [[Quadtree-LOD-system]] Quadtree terrain system
     std::unique_ptr<QuadtreeNode> mQuadtreeRoot;
     DirectX::XMFLOAT3 mTerrainCenter = { 0.0f, 0.0f, 0.0f };
@@ -243,69 +229,6 @@ private:
     };
     TessellationConstants mTessellationConstants;
     std::unique_ptr<UploadBuffer<TessellationConstants>> mTessellationCB = nullptr;
-    
-    // Atmosphere rendering
-    struct AtmosphereParams
-    {
-        DirectX::XMFLOAT4X4 View;
-        DirectX::XMFLOAT4X4 Projection;
-        DirectX::XMFLOAT3 CameraPos;
-        float CameraAltitudeDisplacement; // Artificial altitude offset for better atmospheric calculations
-        DirectX::XMFLOAT3 SunDirection;
-        float padding1;
-        DirectX::XMFLOAT3 PlanetCenter;
-        float AtmosphereRadius;
-        float PlanetRadius;
-        float padding2;
-        DirectX::XMFLOAT3 RayleighScattering;
-        float padding3;
-        DirectX::XMFLOAT3 MieScattering;
-        float MieG;
-        float SunIntensity;
-    int AtmosphereMode; // 0 = Hoffman-Preetham, 1 = Ray Marching
-    float DensityMultiplier;
-    float PollutionLevel;
-    float SunAngularRadius; // Angular radius of sun disk in radians
-    float padding4;
-    // Exponential Height Fog parameters (used by terrain shader)
-    float FogHeight; // Reference height for fog
-    float FogDensity; // Fog density multiplier
-    float FogHeightFalloff; // How quickly fog density changes with height
-    float MinFogOpacity; // Minimum fog opacity
-    DirectX::XMFLOAT3 FogColor; // Fog inscattering color
-    float padding5;
-    int EnableFog; // Enable/disable exponential height fog (1 = enabled, 0 = disabled)
-    float padding6[3];
-    };
-    
-    AtmosphereParams mAtmosphereSettings;
-    bool mEnableAtmosphere = true;
-    bool mAnimateSunDirection = false; // Enable/disable sun direction animation
-    ComPtr<ID3D12RootSignature> mAtmosphereRootSignature = nullptr;
-    std::unique_ptr<UploadBuffer<AtmosphereParams>> mAtmosphereCB = nullptr;
-    MeshGeometry* mSkyDomeGeo = nullptr;
-    
-    // Terrain atmosphere constants (simplified structure matching shader)
-    struct TerrainAtmosphereConstants
-    {
-        DirectX::XMFLOAT3 sunDirection;
-        float atmosphereRadius;
-        float planetRadius;
-        float pollutionLevel;
-        float densityMultiplier;
-        int atmosphereMode;
-        float SunIntensity; // Sun intensity for terrain lighting
-        // Exponential Height Fog parameters for terrain
-        float FogHeight;
-        float FogDensity;
-        float FogHeightFalloff;
-        float MinFogOpacity;
-        DirectX::XMFLOAT3 FogColor;
-        float paddingFog0;
-        int EnableFog;
-        float paddingFog1[3];
-    };
-    std::unique_ptr<UploadBuffer<TerrainAtmosphereConstants>> mTerrainAtmosphereCB = nullptr;
 };
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
@@ -317,7 +240,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
 
     try
     {
-        Labor4App theApp(hInstance);
+        BaselineApp theApp(hInstance);
         if(!theApp.Initialize())
             return 0;
 
@@ -330,18 +253,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
     }
 }
 
-Labor4App::Labor4App(HINSTANCE hInstance)
+BaselineApp::BaselineApp(HINSTANCE hInstance)
     : D3DApp(hInstance)
 {
 }
 
-Labor4App::~Labor4App()
+BaselineApp::~BaselineApp()
 {
     if(md3dDevice != nullptr)
         FlushCommandQueue();
+    
+    // Cleanup IMGUI
+    ImGui_ImplDX12_Shutdown();
+    ImGui_ImplWin32_Shutdown();
+    ImGui::DestroyContext();
 }
 
-bool Labor4App::Initialize()
+bool BaselineApp::Initialize()
 {
     if(!D3DApp::Initialize())
         return false;
@@ -381,53 +309,43 @@ bool Labor4App::Initialize()
     // Create tessellation constant buffer
     mTessellationCB = std::make_unique<UploadBuffer<TessellationConstants>>(md3dDevice.Get(), 1, true);
     mTessellationCB->CopyData(0, mTessellationConstants);
-    
-    // Initialize atmosphere rendering
-    InitializeAtmosphere();
-    
-    // Initialize IMGUI
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO(); (void)io;
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
-    
-    // Setup Dear ImGui style
-    ImGui::StyleColorsDark();
-    
-    // Setup Platform/Renderer backends
-    ImGui_ImplWin32_Init(mhMainWnd);
-    
-    // Create descriptor heap for IMGUI (need more descriptors for fonts and textures)
-    D3D12_DESCRIPTOR_HEAP_DESC desc = {};
-    desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-    desc.NumDescriptors = 100; // Enough for fonts and textures
-    desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-    ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&mImGuiDescriptorHeap)));
-    
-    // Get descriptor handles for the first descriptor (for font texture)
-    D3D12_CPU_DESCRIPTOR_HANDLE fontSrvCpuHandle = mImGuiDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
-    D3D12_GPU_DESCRIPTOR_HANDLE fontSrvGpuHandle = mImGuiDescriptorHeap->GetGPUDescriptorHandleForHeapStart();
-    
-    // Initialize DirectX12 backend for IMGUI using legacy method (simpler)
-    ImGui_ImplDX12_Init(md3dDevice.Get(), gNumFrameResources, mBackBufferFormat, 
-                       mImGuiDescriptorHeap.Get(), fontSrvCpuHandle, fontSrvGpuHandle);
 
     // Initialize camera
     mCamera.SetPosition(0.0f, 2.0f, -5.0f);
     mCamera.LookAt(XMVectorSet(0.0f, 2.0f, -5.0f, 0.0f), 
                    XMVectorSet(0.0f, 0.0f, 0.0f, 0.0f), 
                    XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
-    // Increased far plane to accommodate sky dome (radius 1000.0f needs at least 2000.0f far plane)
-    mCamera.SetLens(0.25f*MathHelper::Pi, AspectRatio(), 1.0f, 20000.0f);
+    mCamera.SetLens(0.25f*MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
     mCamera.UpdateViewMatrix();
     
     // Initialize pass constant buffer with default terrain values
-    mPassCB.heightScale = 100.0f;  // Increased for more prominent height changes (was 10.0f)
+    mPassCB.heightScale = 1.0f;  // Default displacement strength (slider range: 0-10)
     mPassCB.terrainSize = 100.0f;  // Reduced by 10x (was 1000.0f)
     mPassCB.heightmapWidth = 256;  // Will be updated when heightmap is loaded
     mPassCB.heightmapHeight = 256;
     mPassCB.tileSize = 3.2f;  // Reduced by 10x
+    mPassCB.terrainYOffset = 0.0f;  // Initialize terrain Y offset
+
+    // Initialize IMGUI
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGui::StyleColorsDark();
+    
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+
+    ImGui_ImplDX12_InitInfo init_info = {};
+    init_info.Device = md3dDevice.Get();
+    init_info.CommandQueue = mCommandQueue.Get();
+    init_info.NumFramesInFlight = gNumFrameResources;
+    init_info.RTVFormat = mBackBufferFormat;
+    init_info.DSVFormat = mDepthStencilFormat;
+    init_info.SrvDescriptorHeap = mSrvDescriptorHeap.Get();
+    init_info.LegacySingleSrvCpuDescriptor = mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
+    init_info.LegacySingleSrvGpuDescriptor = mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart();
+    ImGui_ImplWin32_Init(mhMainWnd);
+    ImGui_ImplDX12_Init(&init_info);
 
     // Execute the initialization commands.
     ThrowIfFailed(mCommandList->Close());
@@ -439,7 +357,7 @@ bool Labor4App::Initialize()
     return true;
 }
 
-void Labor4App::OnResize()
+void BaselineApp::OnResize()
 {
     D3DApp::OnResize();
 
@@ -452,7 +370,7 @@ void Labor4App::OnResize()
     XMStoreFloat4x4(&mProj, P);
 }
 
-void Labor4App::Update(const GameTimer& gt)
+void BaselineApp::Update(const GameTimer& gt)
 {
     // [[Rendering-pipeline]] Update function: Called every frame before rendering
     // This function prepares all data needed for the current frame:
@@ -460,7 +378,6 @@ void Labor4App::Update(const GameTimer& gt)
     // 2. Updates frustum for culling
     // 3. Updates constant buffers
     // 4. Manages frame resource synchronization
-    // 4. Manages frame resource synchronizatio
     
     // Rotate the cube (reference object, not terrain-related)
     mCubeRotation += 1.0f * gt.DeltaTime();
@@ -538,30 +455,31 @@ void Labor4App::Update(const GameTimer& gt)
         CloseHandle(eventHandle);
     }
 
-    // [[Sun-animation]] Animate sun direction Y parameter on sine wave
-    if (mAnimateSunDirection)
-    {
-        // Animate sun direction Y from -1 to 1 using sine wave
-        // Use total time for smooth continuous animation
-        float sunY = sinf(gt.TotalTime() * 0.5f); // 0.5f controls animation speed
-        mAtmosphereSettings.SunDirection.y = sunY;
-        
-        // Normalize sun direction after modifying Y component
-        XMVECTOR sunDir = XMLoadFloat3(&mAtmosphereSettings.SunDirection);
-        sunDir = XMVector3Normalize(sunDir);
-        XMStoreFloat3(&mAtmosphereSettings.SunDirection, sunDir);
-    }
-
     UpdateObjectCBs(gt);
-    UpdatePassCB(gt);
     
-    // Start the Dear ImGui frame
+    // IMGUI frame setup - must be before UpdatePassCB so slider changes take effect immediately
     ImGui_ImplDX12_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
+    
+    // Create IMGUI window with terrain controls
+    ImGui::Begin("Terrain Controls");
+    
+    // Slider for displacement strength (heightScale)
+    // This controls how much the heightmap affects terrain elevation
+    
+    
+    // Slider for terrain Y position (height in world)
+    // This moves the entire terrain up or down in world space
+    ImGui::SliderFloat("Terrain Y Position", &mPassCB.terrainYOffset, -100.0f, 100.0f);
+    
+    ImGui::End();
+    
+    // Update pass constant buffer AFTER IMGUI so slider changes are immediately reflected
+    UpdatePassCB(gt);
 }
 
-void Labor4App::Draw(const GameTimer& gt)
+void BaselineApp::Draw(const GameTimer& gt)
 {
     // [[Rendering-pipeline]] Draw function: Records all rendering commands for the current frame
     // This function orchestrates the entire rendering process:
@@ -598,13 +516,11 @@ void Labor4App::Draw(const GameTimer& gt)
         D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
 
     // [[Rendering-pipeline]] STEP 5: Clear render target and depth buffer
-    // Clear render target: Fills with black background (atmosphere will render over it)
+    // Clear render target: Fills with background color (LightSteelBlue)
     // Clear depth buffer: Sets all depth values to 1.0 (far plane = maximum depth)
     // Clear stencil buffer: Sets all stencil values to 0
     // Clearing ensures we start with a clean slate each frame
-    // If atmosphere is enabled, it will render as the background; otherwise black background is shown
-    float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f }; // Black background
-    mCommandList->ClearRenderTargetView(CurrentBackBufferView(), clearColor, 0, nullptr);
+    mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::LightSteelBlue, 0, nullptr);
     mCommandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
 
     // [[Rendering-pipeline]] STEP 6: Set render targets
@@ -615,12 +531,6 @@ void Labor4App::Draw(const GameTimer& gt)
     // Third parameter: true = also bind depth/stencil buffer
     // Fourth parameter: Pointer to depth/stencil view
     mCommandList->OMSetRenderTargets(1, &CurrentBackBufferView(), true, &DepthStencilView());
-    
-    // Render atmosphere first (background)
-    if (mEnableAtmosphere)
-    {
-        RenderAtmosphere(mCommandList.Get());
-    }
 
     // [[Rendering-pipeline]] STEP 7: Set root signature
     // Root signature defines how shaders access resources (constant buffers, textures, samplers)
@@ -644,12 +554,12 @@ void Labor4App::Draw(const GameTimer& gt)
     ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
     mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
     
-    // [[Rendering-pipeline]] STEP 10: Set texture descriptor table (root parameter slot 4, registers t0, t1)
+    // [[Rendering-pipeline]] STEP 10: Set texture descriptor table (root parameter slot 3, registers t0, t1)
     // This binds the heightmap texture (t0) and terrain texture (t1) to the shader
     // The descriptor table points to the start of the SRV heap
     // Shaders can access textures using register indices (t0, t1)
     CD3DX12_GPU_DESCRIPTOR_HANDLE texHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
-    mCommandList->SetGraphicsRootDescriptorTable(4, texHandle);
+    mCommandList->SetGraphicsRootDescriptorTable(3, texHandle);
     
     // [[Rendering-pipeline]] STEP 11: Set tessellation constant buffer (root parameter slot 2, register b2)
     // Tessellation constants: min/max tessellation factors, tessellation distance
@@ -657,14 +567,6 @@ void Labor4App::Draw(const GameTimer& gt)
     // Updated rarely (only when tessellation settings change)
     auto tessCB = mTessellationCB->Resource();
     mCommandList->SetGraphicsRootConstantBufferView(2, tessCB->GetGPUVirtualAddress());
-    
-    // Set atmosphere constant buffer for terrain extinction (root parameter slot 3, register b3)
-    if (mEnableAtmosphere && mTerrainAtmosphereCB)
-    {
-        UpdateTerrainAtmosphereCB();
-        auto terrainAtmosphereCB = mTerrainAtmosphereCB->Resource();
-        mCommandList->SetGraphicsRootConstantBufferView(3, terrainAtmosphereCB->GetGPUVirtualAddress());
-    }
 
     // [[LOD-selection-algorithm]] [[Frustum-culling-module]] STEP 12: Perform LOD selection and frustum culling
     // This is the critical optimization step that determines which terrain nodes to render
@@ -706,20 +608,9 @@ void Labor4App::Draw(const GameTimer& gt)
     // Switch to opaque PSO for non-terrain objects
     mCommandList->SetPipelineState(mPSOs["opaque"].Get());
     DrawRenderItems(mCommandList.Get());
-    
-    // Render IMGUI windows
-    ImGui::Begin("Atmosphere Controls");
-    RenderAtmosphereGUI();
-    ImGui::End();
-    
-    // Render IMGUI
+
+    // [[Rendering-pipeline]] STEP 15a: Render IMGUI
     ImGui::Render();
-    
-    // Set IMGUI descriptor heap
-    ID3D12DescriptorHeap* imGuiHeaps[] = { mImGuiDescriptorHeap.Get() };
-    mCommandList->SetDescriptorHeaps(_countof(imGuiHeaps), imGuiHeaps);
-    
-    // Render IMGUI draw data
     ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), mCommandList.Get());
 
     // [[Rendering-pipeline]] STEP 16: Transition back buffer to present state
@@ -755,19 +646,18 @@ void Labor4App::Draw(const GameTimer& gt)
     mCommandQueue->Signal(mFence.Get(), mCurrentFence);
 }
 
-void Labor4App::BuildRootSignature()
+void BaselineApp::BuildRootSignature()
 {
     // Create descriptor table for textures (heightmap and terrain texture)
     CD3DX12_DESCRIPTOR_RANGE texTable;
     texTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0);  // 2 textures: heightmap + terrain texture
 
-    CD3DX12_ROOT_PARAMETER slotRootParameter[5];
+    CD3DX12_ROOT_PARAMETER slotRootParameter[4];
 
     slotRootParameter[0].InitAsConstantBufferView(0); // Object constants (b0)
     slotRootParameter[1].InitAsConstantBufferView(1); // Pass constants (b1)
     slotRootParameter[2].InitAsConstantBufferView(2); // Tessellation constants (b2)
-    slotRootParameter[3].InitAsConstantBufferView(3); // Atmosphere constants (b3) for terrain extinction
-    slotRootParameter[4].InitAsDescriptorTable(1, &texTable, D3D12_SHADER_VISIBILITY_ALL); // Textures (t0, t1) - used in both VS and PS
+    slotRootParameter[3].InitAsDescriptorTable(1, &texTable, D3D12_SHADER_VISIBILITY_ALL); // Textures (t0, t1) - used in both VS and PS
 
     // Static sampler for texture sampling
     CD3DX12_STATIC_SAMPLER_DESC samplerDesc(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
@@ -775,7 +665,7 @@ void Labor4App::BuildRootSignature()
     samplerDesc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
     samplerDesc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
 
-    CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(5, slotRootParameter,
+    CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(4, slotRootParameter,
         1, &samplerDesc,
         D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
@@ -797,7 +687,7 @@ void Labor4App::BuildRootSignature()
         IID_PPV_ARGS(mRootSignature.GetAddressOf())));
 }
 
-void Labor4App::BuildShadersAndInputLayout()
+void BaselineApp::BuildShadersAndInputLayout()
 {
     mShaders["pyramidVS"] = d3dUtil::CompileShader(L"Shaders\\Pyramid.hlsl", nullptr, "VS", "vs_5_1");
     mShaders["pyramidPS"] = d3dUtil::CompileShader(L"Shaders\\Pyramid.hlsl", nullptr, "PS", "ps_5_1");
@@ -809,7 +699,7 @@ void Labor4App::BuildShadersAndInputLayout()
     };
 }
 
-void Labor4App::BuildTerrainShaders()
+void BaselineApp::BuildTerrainShaders()
 {
     mShaders["terrainVS"] = d3dUtil::CompileShader(L"Shaders\\Terrain.hlsl", nullptr, "VS", "vs_5_1");
     mShaders["terrainHS"] = d3dUtil::CompileShader(L"Shaders\\Terrain.hlsl", nullptr, "HS", "hs_5_1");
@@ -817,7 +707,7 @@ void Labor4App::BuildTerrainShaders()
     mShaders["terrainPS"] = d3dUtil::CompileShader(L"Shaders\\Terrain.hlsl", nullptr, "PS", "ps_5_1");
 }
 
-void Labor4App::BuildCubeGeometry()
+void BaselineApp::BuildCubeGeometry()
 {
     // Use GeometryGenerator to create a cube with proper normals
     GeometryGenerator geoGen;
@@ -878,7 +768,7 @@ void Labor4App::BuildCubeGeometry()
     mGeometries[geo->Name] = std::move(geo);
 }
 
-void Labor4App::BuildPSOs()
+void BaselineApp::BuildPSOs()
 {
     D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc;
     ZeroMemory(&psoDesc, sizeof(D3D12_GRAPHICS_PIPELINE_STATE_DESC));
@@ -907,7 +797,7 @@ void Labor4App::BuildPSOs()
     ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&mPSOs["opaque"])));
 }
 
-void Labor4App::BuildTerrainPSO()
+void BaselineApp::BuildTerrainPSO()
 {
     // Terrain input layout (only position)
     std::vector<D3D12_INPUT_ELEMENT_DESC> terrainInputLayout =
@@ -919,7 +809,7 @@ void Labor4App::BuildTerrainPSO()
     ZeroMemory(&psoDesc, sizeof(D3D12_GRAPHICS_PIPELINE_STATE_DESC));
     psoDesc.InputLayout = { terrainInputLayout.data(), (UINT)terrainInputLayout.size() };
     psoDesc.pRootSignature = mRootSignature.Get();
-    psoDesc.VS = 
+    psoDesc.VS = ImGui::SliderFloat("Displacement Strength", &mPassCB.heightScale, 0.0f, 10.0f);
     { 
         reinterpret_cast<BYTE*>(mShaders["terrainVS"]->GetBufferPointer()), 
         mShaders["terrainVS"]->GetBufferSize()
@@ -952,16 +842,16 @@ void Labor4App::BuildTerrainPSO()
     ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&mPSOs["terrain"])));
 }
 
-void Labor4App::BuildFrameResources()
+void BaselineApp::BuildFrameResources()
 {
     for(int i = 0; i < gNumFrameResources; ++i)
     {
-        mFrameResources.push_back(std::make_unique<Labor4FrameResource>(md3dDevice.Get(),
+        mFrameResources.push_back(std::make_unique<BaselineFrameResource>(md3dDevice.Get(),
             1, 1));
     }
 }
 
-void Labor4App::BuildRenderItems()
+void BaselineApp::BuildRenderItems()
 {
     auto cubeRitem = std::make_unique<RenderItem>();
     cubeRitem->World = MathHelper::Identity4x4();
@@ -975,7 +865,7 @@ void Labor4App::BuildRenderItems()
     mAllRitems.push_back(std::move(cubeRitem));
 }
 
-void Labor4App::UpdateObjectCBs(const GameTimer& gt)
+void BaselineApp::UpdateObjectCBs(const GameTimer& gt)
 {
     auto currObjectCB = mCurrFrameResource->ObjectCB.get();
     
@@ -990,7 +880,7 @@ void Labor4App::UpdateObjectCBs(const GameTimer& gt)
     currObjectCB->CopyData(0, objConstants);
 }
 
-void Labor4App::UpdatePassCB(const GameTimer& gt)
+void BaselineApp::UpdatePassCB(const GameTimer& gt)
 {
     // Use camera view matrix
     XMMATRIX view = mCamera.GetView();
@@ -1001,11 +891,16 @@ void Labor4App::UpdatePassCB(const GameTimer& gt)
 
     auto currPassCB = mCurrFrameResource->PassCB.get();
     PassConstants passConstants = mPassCB;  // Copy all members including heightmap params
+    
+    // Ensure camera position is up to date (needed for LOD and tessellation calculations)
+    XMVECTOR camPos = mCamera.GetPosition();
+    XMStoreFloat3(&passConstants.cameraPosition, camPos);
+    
     passConstants.TotalTime = gt.TotalTime();
     currPassCB->CopyData(0, passConstants);
 }
 
-void Labor4App::DrawRenderItems(ID3D12GraphicsCommandList* cmdList)
+void BaselineApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList)
 {
     UINT objCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
 
@@ -1026,7 +921,7 @@ void Labor4App::DrawRenderItems(ID3D12GraphicsCommandList* cmdList)
     }
 }
 
-void Labor4App::CreateSrvDescriptorHeap()
+void BaselineApp::CreateSrvDescriptorHeap()
 {
     // Create descriptor heap for shader resource views
     D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
@@ -1038,7 +933,7 @@ void Labor4App::CreateSrvDescriptorHeap()
     mCbvSrvUavDescriptorSize = md3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 }
 
-bool Labor4App::LoadTerrainTexture(const std::wstring& texturePath)
+bool BaselineApp::LoadTerrainTexture(const std::wstring& texturePath)
 {
     // Use DDSTextureLoader to load the terrain texture
     ComPtr<ID3D12Resource> texture;
@@ -1080,7 +975,7 @@ bool Labor4App::LoadTerrainTexture(const std::wstring& texturePath)
     return true;
 }
 
-bool Labor4App::LoadHeightmapFromFile(const std::wstring& heightmapPath)
+bool BaselineApp::LoadHeightmapFromFile(const std::wstring& heightmapPath)
 {
     // Use DDSTextureLoader to load the heightmap
     ComPtr<ID3D12Resource> texture;
@@ -1130,7 +1025,7 @@ bool Labor4App::LoadHeightmapFromFile(const std::wstring& heightmapPath)
     return true;
 }
 
-void Labor4App::BuildQuadtree()
+void BaselineApp::BuildQuadtree()
 {
     // Clear existing [[Quadtree-LOD-system]] quadtree
     mQuadtreeRoot.reset();
@@ -1147,7 +1042,7 @@ void Labor4App::BuildQuadtree()
     OutputDebugString(L"Quadtree construction completed.\n");
 }
 
-UINT Labor4App::CalculateMaxLODLevels()
+UINT BaselineApp::CalculateMaxLODLevels()
 {
     // Increase quadtree depth to split terrain into more tiles
     // For more tiles, we'll use a fixed higher depth
@@ -1155,7 +1050,7 @@ UINT Labor4App::CalculateMaxLODLevels()
     return 6;  // Increased from calculated value to create more tiles (was ~2-3 levels)
 }
 
-void Labor4App::BuildQuadtreeRecursive(QuadtreeNode* node, UINT maxLevels)
+void BaselineApp::BuildQuadtreeRecursive(QuadtreeNode* node, UINT maxLevels)
 {
     if (node->level >= maxLevels)
     {
@@ -1204,7 +1099,7 @@ void Labor4App::BuildQuadtreeRecursive(QuadtreeNode* node, UINT maxLevels)
     }
 }
 
-void Labor4App::CreateTerrainTile(QuadtreeNode* node)
+void BaselineApp::CreateTerrainTile(QuadtreeNode* node)
 {
     // This method creates quad patches for [[GPU-tessellation-system]] GPU tessellation
     // Each patch is a quad with 4 control points
@@ -1391,7 +1286,7 @@ void Labor4App::CreateTerrainTile(QuadtreeNode* node)
     CalculateScreenSpaceError(node);
 }
 
-void Labor4App::CalculateScreenSpaceError(QuadtreeNode* node)
+void BaselineApp::CalculateScreenSpaceError(QuadtreeNode* node)
 {
     // [[LOD-selection-algorithm]] Screen space error calculation based on node size and LOD level
     // Formula: error = (node_size / (2^lod_level)) / screen_resolution * viewport_height
@@ -1418,7 +1313,7 @@ void Labor4App::CalculateScreenSpaceError(QuadtreeNode* node)
     node->screenSpaceError *= terrainComplexityFactor;
 }
 
-void Labor4App::CreateSkirtGeometry(QuadtreeNode* node, UINT verticesPerSide, float tileWorldSize)
+void BaselineApp::CreateSkirtGeometry(QuadtreeNode* node, UINT verticesPerSide, float tileWorldSize)
 {
     // Skirts are additional geometry added to the edges of terrain tiles
     // to hide gaps that appear when adjacent tiles have different LOD levels
@@ -1684,7 +1579,7 @@ void Labor4App::CreateSkirtGeometry(QuadtreeNode* node, UINT verticesPerSide, fl
     node->skirtIndexCount = totalSkirtIndices;
 }
 
-void Labor4App::ResetRenderFlags(QuadtreeNode* node)
+void BaselineApp::ResetRenderFlags(QuadtreeNode* node)
 {
     if (!node) return;
     node->shouldRender = false;
@@ -1695,7 +1590,7 @@ void Labor4App::ResetRenderFlags(QuadtreeNode* node)
     }
 }
 
-void Labor4App::SelectLODLevels()
+void BaselineApp::SelectLODLevels()
 {
     // Reset all render flags first
     ResetRenderFlags(mQuadtreeRoot.get());
@@ -1704,7 +1599,7 @@ void Labor4App::SelectLODLevels()
     SelectLODRecursive(mQuadtreeRoot.get(), false);
 }
 
-void Labor4App::SelectLODRecursive(QuadtreeNode* node, bool parentVisible)
+void BaselineApp::SelectLODRecursive(QuadtreeNode* node, bool parentVisible)
 {
     if (!node)
         return;
@@ -1722,11 +1617,9 @@ void Labor4App::SelectLODRecursive(QuadtreeNode* node, bool parentVisible)
     
     // Get camera distance to node center using 2D distance (X, Z only - no Y)
     // This makes [[LOD-selection-algorithm]] LOD transitions more obvious and easier to test
-    // NOTE: Camera coordinate system has X/Z swapped relative to terrain coordinate system
-    // Camera's forward/back (Z) maps to terrain's left/right (X), and vice versa
     DirectX::XMFLOAT3 cameraPos = mPassCB.cameraPosition;
-    float dx = cameraPos.z - node->center.x;  // Camera Z (forward/back) -> Terrain X (left/right)
-    float dz = cameraPos.x - node->center.z;  // Camera X (left/right) -> Terrain Z (forward/back)
+    float dx = cameraPos.x - node->center.x;
+    float dz = cameraPos.z - node->center.z;
     float distance = sqrtf(dx * dx + dz * dz);  // 2D distance only
     
     // Improved [[LOD-selection-algorithm]] LOD calculation: closer nodes should subdivide for more detail
@@ -1782,7 +1675,7 @@ void Labor4App::SelectLODRecursive(QuadtreeNode* node, bool parentVisible)
     }
 }
 
-bool Labor4App::IsNodeVisible(const QuadtreeNode* node) const
+bool BaselineApp::IsNodeVisible(const QuadtreeNode* node) const
 {
     if (!node)
         return false;
@@ -1803,7 +1696,7 @@ bool Labor4App::IsNodeVisible(const QuadtreeNode* node) const
     return containment != DirectX::DISJOINT;
 }
 
-void Labor4App::RenderQuadtreeNodes(ID3D12GraphicsCommandList* cmdList, QuadtreeNode* node)
+void BaselineApp::RenderQuadtreeNodes(ID3D12GraphicsCommandList* cmdList, QuadtreeNode* node)
 {
     if (!node || !node->isVisible)
         return;
@@ -1856,7 +1749,7 @@ void Labor4App::RenderQuadtreeNodes(ID3D12GraphicsCommandList* cmdList, Quadtree
     }
 }
 
-void Labor4App::OnMouseDown(WPARAM btnState, int x, int y)
+void BaselineApp::OnMouseDown(WPARAM btnState, int x, int y)
 {
     if((btnState & MK_RBUTTON) != 0)
     {
@@ -1867,31 +1760,35 @@ void Labor4App::OnMouseDown(WPARAM btnState, int x, int y)
     }
 }
 
-void Labor4App::OnMouseUp(WPARAM btnState, int x, int y)
+void BaselineApp::OnMouseUp(WPARAM btnState, int x, int y)
 {
     ReleaseCapture();
     mRightMouseDown = false;
 }
 
-void Labor4App::OnMouseMove(WPARAM btnState, int x, int y)
+void BaselineApp::OnMouseMove(WPARAM btnState, int x, int y)
 {
-    if(mRightMouseDown)
+    // Don't process camera movement if IMGUI is capturing mouse input
+    if (!ImGui::GetIO().WantCaptureMouse)
     {
-        // Make each pixel correspond to a quarter of a degree.
-        float dx = XMConvertToRadians(0.25f * static_cast<float>(x - mLastMousePos.x));
-        float dy = XMConvertToRadians(0.25f * static_cast<float>(y - mLastMousePos.y));
+        if(mRightMouseDown)
+        {
+            // Make each pixel correspond to a quarter of a degree.
+            float dx = XMConvertToRadians(0.25f * static_cast<float>(x - mLastMousePos.x));
+            float dy = XMConvertToRadians(0.25f * static_cast<float>(y - mLastMousePos.y));
 
-        mCamera.Pitch(dy);
-        mCamera.Yaw(dx);
+            mCamera.Pitch(dy);
+            mCamera.Yaw(dx);
 
-        mCamera.UpdateViewMatrix();
+            mCamera.UpdateViewMatrix();
+        }
     }
 
     mLastMousePos.x = x;
     mLastMousePos.y = y;
 }
 
-void Labor4App::OnKeyPressed(const GameTimer& gt, WPARAM key)
+void BaselineApp::OnKeyPressed(const GameTimer& gt, WPARAM key)
 {
     // WASD movement is handled in Update() via GetAsyncKeyState
     // This method is called for key down events, but we're handling continuous
@@ -1902,374 +1799,5 @@ void Labor4App::OnKeyPressed(const GameTimer& gt, WPARAM key)
     {
         mFrustumNeedsUpdate = true;
         OutputDebugString(L"Frustum culling update triggered by 'C' key.\n");
-    }
-}
-
-void Labor4App::InitializeAtmosphere()
-{
-    // Initialize default atmosphere parameters
-    mAtmosphereSettings.CameraPos = { 0, 0, 0 };
-    // Sun direction: points FROM sun TO planet (normalized)
-    // For a sun in the sky, we want it coming from above and to the side
-    mAtmosphereSettings.SunDirection = { 0.3f, -0.8f, 0.5f }; // Sun from upper-right
-    XMVECTOR sunDir = XMLoadFloat3(&mAtmosphereSettings.SunDirection);
-    sunDir = XMVector3Normalize(sunDir);
-    XMStoreFloat3(&mAtmosphereSettings.SunDirection, sunDir);
-    
-    // Smaller planet/atmosphere for better visualization
-    mAtmosphereSettings.PlanetCenter = { 0, -1000.0f, 0 }; // Planet center
-    mAtmosphereSettings.PlanetRadius = 100.0f; // Planet radius
-    mAtmosphereSettings.AtmosphereRadius = 110.0f; // Atmosphere radius (100 units above planet)
-    // Realistic Rayleigh scattering coefficients based on GPU Gems 2 Chapter 16
-    // Reference: https://developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-16-accurate-atmospheric-scattering
-    // Scaled for rendering (original values are 5.8e-6, 1.35e-5, 3.31e-5)
-    // Blue is strongest (why sky is blue), red is weakest
-    mAtmosphereSettings.RayleighScattering = { 0.0058f, 0.0135f, 0.0331f }; // RGB scattering coefficients
-    mAtmosphereSettings.MieScattering = { 0.0021f, 0.0021f, 0.0021f }; // Increased from 0.000399 for more visible effect
-    mAtmosphereSettings.MieG = -0.75f; // Negative for aerosols (GPU Gems 2: -0.75 to -0.999)
-    mAtmosphereSettings.SunIntensity = 20.0f;
-    mAtmosphereSettings.AtmosphereMode = 0; // Default to Hoffman-Preetham
-    mAtmosphereSettings.DensityMultiplier = 1.0f;
-    mAtmosphereSettings.PollutionLevel = 0.1f; // Reduced pollution for cleaner, bluer sky
-    mAtmosphereSettings.SunAngularRadius = 0.035f; // ~2 degrees (much more visible than 0.27 degrees)
-    mAtmosphereSettings.CameraAltitudeDisplacement = 0.0f; // No displacement by default
-    // Exponential Height Fog defaults
-    mAtmosphereSettings.FogHeight = 0.0f; // Fog at ground level
-    mAtmosphereSettings.FogDensity = 0.05f; // Moderate fog density
-    mAtmosphereSettings.FogHeightFalloff = 0.2f; // Moderate height falloff
-    mAtmosphereSettings.MinFogOpacity = 0.0f; // No minimum opacity
-    mAtmosphereSettings.FogColor = { 0.9f, 0.95f, 1.0f }; // Light blue fog color
-    mAtmosphereSettings.EnableFog = 1; // Enable fog by default (1 = enabled)
-    
-    // Build atmosphere components
-    BuildAtmosphereRootSignature();
-    BuildAtmosphereShaders();
-    BuildSkyDomeGeometry();
-    BuildAtmospherePSO();
-    
-    // Create constant buffer
-    mAtmosphereCB = std::make_unique<UploadBuffer<AtmosphereParams>>(md3dDevice.Get(), 1, true);
-    
-    // Create terrain atmosphere constant buffer
-    mTerrainAtmosphereCB = std::make_unique<UploadBuffer<TerrainAtmosphereConstants>>(md3dDevice.Get(), 1, true);
-    UpdateTerrainAtmosphereCB();
-}
-
-void Labor4App::BuildAtmosphereRootSignature()
-{
-    CD3DX12_ROOT_PARAMETER slotRootParameter[1];
-    slotRootParameter[0].InitAsConstantBufferView(0); // Atmosphere constants (b0)
-    
-    CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(1, slotRootParameter,
-        0, nullptr,
-        D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
-    
-    ComPtr<ID3DBlob> serializedRootSig = nullptr;
-    ComPtr<ID3DBlob> errorBlob = nullptr;
-    HRESULT hr = D3D12SerializeRootSignature(&rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1,
-        serializedRootSig.GetAddressOf(), errorBlob.GetAddressOf());
-    
-    if (errorBlob != nullptr)
-    {
-        ::OutputDebugStringA((char*)errorBlob->GetBufferPointer());
-    }
-    ThrowIfFailed(hr);
-    
-    ThrowIfFailed(md3dDevice->CreateRootSignature(
-        0,
-        serializedRootSig->GetBufferPointer(),
-        serializedRootSig->GetBufferSize(),
-        IID_PPV_ARGS(mAtmosphereRootSignature.GetAddressOf())));
-}
-
-void Labor4App::BuildAtmosphereShaders()
-{
-    mShaders["atmosphereVS"] = d3dUtil::CompileShader(L"Shaders\\Atmosphere.hlsl", nullptr, "VS_Main", "vs_5_1");
-    mShaders["atmospherePS"] = d3dUtil::CompileShader(L"Shaders\\Atmosphere.hlsl", nullptr, "PS_Main", "ps_5_1");
-}
-
-void Labor4App::BuildSkyDomeGeometry()
-{
-    GeometryGenerator geoGen;
-    // Sky dome radius - smaller to avoid culling issues
-    // Using 500.0f radius ensures it's always visible and not culled
-    GeometryGenerator::MeshData sphere = geoGen.CreateSphere(500.0f, 20, 40); // Sky dome sphere
-    
-    std::vector<DirectX::XMFLOAT3> vertices;
-    vertices.reserve(sphere.Vertices.size());
-    for (const auto& v : sphere.Vertices)
-    {
-        vertices.push_back(v.Position);
-    }
-    
-    const UINT vbByteSize = (UINT)vertices.size() * sizeof(DirectX::XMFLOAT3);
-    
-    auto geo = std::make_unique<MeshGeometry>();
-    geo->Name = "skyDomeGeo";
-    
-    ThrowIfFailed(D3DCreateBlob(vbByteSize, &geo->VertexBufferCPU));
-    CopyMemory(geo->VertexBufferCPU->GetBufferPointer(), vertices.data(), vbByteSize);
-    
-    geo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
-        mCommandList.Get(), vertices.data(), vbByteSize, geo->VertexBufferUploader);
-    
-    geo->VertexByteStride = sizeof(DirectX::XMFLOAT3);
-    geo->VertexBufferByteSize = vbByteSize;
-    
-    // Convert indices
-    std::vector<std::uint16_t> indices16 = sphere.GetIndices16();
-    const UINT ibByteSize = (UINT)indices16.size() * sizeof(std::uint16_t);
-    
-    ThrowIfFailed(D3DCreateBlob(ibByteSize, &geo->IndexBufferCPU));
-    CopyMemory(geo->IndexBufferCPU->GetBufferPointer(), indices16.data(), ibByteSize);
-    
-    geo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
-        mCommandList.Get(), indices16.data(), ibByteSize, geo->IndexBufferUploader);
-    
-    geo->IndexFormat = DXGI_FORMAT_R16_UINT;
-    geo->IndexBufferByteSize = ibByteSize;
-    
-    SubmeshGeometry submesh;
-    submesh.IndexCount = (UINT)indices16.size();
-    submesh.StartIndexLocation = 0;
-    submesh.BaseVertexLocation = 0;
-    
-    geo->DrawArgs["skyDome"] = submesh;
-    
-    mGeometries[geo->Name] = std::move(geo);
-    mSkyDomeGeo = mGeometries["skyDomeGeo"].get();
-}
-
-void Labor4App::BuildAtmospherePSO()
-{
-    std::vector<D3D12_INPUT_ELEMENT_DESC> atmosphereInputLayout =
-    {
-        { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-    };
-    
-    D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc;
-    ZeroMemory(&psoDesc, sizeof(D3D12_GRAPHICS_PIPELINE_STATE_DESC));
-    psoDesc.InputLayout = { atmosphereInputLayout.data(), (UINT)atmosphereInputLayout.size() };
-    psoDesc.pRootSignature = mAtmosphereRootSignature.Get();
-    psoDesc.VS = 
-    { 
-        reinterpret_cast<BYTE*>(mShaders["atmosphereVS"]->GetBufferPointer()), 
-        mShaders["atmosphereVS"]->GetBufferSize()
-    };
-    psoDesc.PS = 
-    { 
-        reinterpret_cast<BYTE*>(mShaders["atmospherePS"]->GetBufferPointer()),
-        mShaders["atmospherePS"]->GetBufferSize()
-    };
-    // Rasterizer state: disable culling for sky dome (we're rendering the inside of the sphere)
-    // Sky dome sphere has outward-facing normals, but we're inside looking out
-    // Disable culling to ensure all faces render correctly
-    D3D12_RASTERIZER_DESC rasterizerDesc = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-    rasterizerDesc.CullMode = D3D12_CULL_MODE_NONE; // Disable culling for sky dome
-    psoDesc.RasterizerState = rasterizerDesc;
-    psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
-    
-    // Depth stencil state: disable depth test and write for sky dome
-    // Sky dome should always render as background, so we disable depth testing
-    // This ensures the sky is always visible behind terrain
-    D3D12_DEPTH_STENCIL_DESC depthStencilDesc = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
-    depthStencilDesc.DepthEnable = FALSE; // Disable depth test for sky dome
-    depthStencilDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO; // Don't write to depth buffer
-    depthStencilDesc.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS; // Always pass (not used since DepthEnable is FALSE)
-    psoDesc.DepthStencilState = depthStencilDesc;
-    
-    psoDesc.SampleMask = UINT_MAX;
-    psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-    psoDesc.NumRenderTargets = 1;
-    psoDesc.RTVFormats[0] = mBackBufferFormat;
-    psoDesc.SampleDesc.Count = m4xMsaaState ? 4 : 1;
-    psoDesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
-    psoDesc.DSVFormat = mDepthStencilFormat;
-    ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&mPSOs["atmosphere"])));
-}
-
-void Labor4App::UpdateAtmosphereCB()
-{
-    // Update camera position with altitude displacement
-    // This allows simulating higher altitude views for better atmospheric scattering
-    XMFLOAT3 camPos = mCamera.GetPosition3f();
-    camPos.y += mAtmosphereSettings.CameraAltitudeDisplacement; // Add artificial altitude
-    mAtmosphereSettings.CameraPos = camPos;
-    
-    // Update view and projection matrices
-    XMMATRIX view = mCamera.GetView();
-    XMMATRIX proj = mCamera.GetProj();
-    XMStoreFloat4x4(&mAtmosphereSettings.View, XMMatrixTranspose(view));
-    XMStoreFloat4x4(&mAtmosphereSettings.Projection, XMMatrixTranspose(proj));
-    
-    // Update constant buffer
-    mAtmosphereCB->CopyData(0, mAtmosphereSettings);
-    
-    // Also update terrain atmosphere constant buffer
-    UpdateTerrainAtmosphereCB();
-}
-
-void Labor4App::UpdateTerrainAtmosphereCB()
-{
-    TerrainAtmosphereConstants terrainAtm;
-    terrainAtm.sunDirection = mAtmosphereSettings.SunDirection;
-    terrainAtm.atmosphereRadius = mAtmosphereSettings.AtmosphereRadius;
-    terrainAtm.planetRadius = mAtmosphereSettings.PlanetRadius;
-    terrainAtm.pollutionLevel = mAtmosphereSettings.PollutionLevel;
-    terrainAtm.densityMultiplier = mAtmosphereSettings.DensityMultiplier;
-    terrainAtm.atmosphereMode = mAtmosphereSettings.AtmosphereMode;
-    terrainAtm.SunIntensity = mAtmosphereSettings.SunIntensity;
-    // Copy fog parameters to terrain constant buffer
-    terrainAtm.FogHeight = mAtmosphereSettings.FogHeight;
-    terrainAtm.FogDensity = mAtmosphereSettings.FogDensity;
-    terrainAtm.FogHeightFalloff = mAtmosphereSettings.FogHeightFalloff;
-    terrainAtm.MinFogOpacity = mAtmosphereSettings.MinFogOpacity;
-    terrainAtm.FogColor = mAtmosphereSettings.FogColor;
-    terrainAtm.paddingFog0 = 0.0f;
-    terrainAtm.EnableFog = mAtmosphereSettings.EnableFog;
-    terrainAtm.paddingFog1[0] = 0.0f;
-    terrainAtm.paddingFog1[1] = 0.0f;
-    terrainAtm.paddingFog1[2] = 0.0f;
-    
-    mTerrainAtmosphereCB->CopyData(0, terrainAtm);
-}
-
-void Labor4App::RenderAtmosphere(ID3D12GraphicsCommandList* cmdList)
-{
-    if (!mEnableAtmosphere || !mSkyDomeGeo)
-        return;
-    
-    // Update atmosphere constant buffer
-    UpdateAtmosphereCB();
-    
-    // Set root signature
-    cmdList->SetGraphicsRootSignature(mAtmosphereRootSignature.Get());
-    
-    // Set constant buffer
-    auto atmosphereCB = mAtmosphereCB->Resource();
-    cmdList->SetGraphicsRootConstantBufferView(0, atmosphereCB->GetGPUVirtualAddress());
-    
-    // Set pipeline state
-    cmdList->SetPipelineState(mPSOs["atmosphere"].Get());
-    
-    // Set vertex and index buffers
-    auto geo = mSkyDomeGeo;
-    cmdList->IASetVertexBuffers(0, 1, &geo->VertexBufferView());
-    cmdList->IASetIndexBuffer(&geo->IndexBufferView());
-    cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    
-    // Draw sky dome
-    auto drawArgs = geo->DrawArgs["skyDome"];
-    cmdList->DrawIndexedInstanced(drawArgs.IndexCount, 1, drawArgs.StartIndexLocation, drawArgs.BaseVertexLocation, 0);
-}
-
-void Labor4App::RenderAtmosphereGUI()
-{
-    // This function should be called from your IMGUI rendering code
-    // Example usage (add this where you render IMGUI windows, typically before ImGui::Render()):
-    // ImGui::Begin("Atmosphere Controls");
-    // RenderAtmosphereGUI();
-    // ImGui::End();
-    
-    if (ImGui::CollapsingHeader("Atmosphere Settings"))
-    {
-        ImGui::Checkbox("Enable Atmosphere", &mEnableAtmosphere);
-        
-        ImGui::Text("Rendering Mode:");
-        const char* modes[] = { "Hoffman-Preetham (Ground Level)", "Ray Marching (High Altitude)" };
-        ImGui::Combo("Atmosphere Mode", &mAtmosphereSettings.AtmosphereMode, modes, 2);
-        
-        ImGui::Separator();
-        ImGui::Text("Environmental Parameters:");
-        
-        ImGui::SliderFloat("Pollution Level", &mAtmosphereSettings.PollutionLevel, 0.0f, 2.0f, "%.2f");
-        ImGui::SliderFloat("Density Multiplier", &mAtmosphereSettings.DensityMultiplier, 0.1f, 10.0f, "%.2f");
-        // Increased range for sun intensity to make it more influential
-        ImGui::SliderFloat("Sun Intensity", &mAtmosphereSettings.SunIntensity, 0.0f, 2000.0f, "%.1f");
-        
-        ImGui::Separator();
-        ImGui::Text("Scattering Parameters:");
-        
-        // Increased ranges for more visible effects (based on GPU Gems 2)
-        ImGui::SliderFloat3("Rayleigh Scattering", &mAtmosphereSettings.RayleighScattering.x, 0.0f, 1.1f, "%.5f");
-        ImGui::SliderFloat3("Mie Scattering", &mAtmosphereSettings.MieScattering.x, 0.0f, 1.01f, "%.5f");
-        // Mie G for aerosols should be negative (-0.75 to -0.999 per GPU Gems 2)
-        ImGui::SliderFloat("Mie G (Phase)", &mAtmosphereSettings.MieG, -0.99f, 0.0f, "%.3f");
-        
-        ImGui::Separator();
-        ImGui::Text("Camera Settings:");    
-        // Camera altitude displacement for better atmospheric calculations at higher altitudes
-        ImGui::SliderFloat("Camera Altitude Displacement (m)", &mAtmosphereSettings.CameraAltitudeDisplacement, 0.0f, 100000.0f, "%.0f");
-        ImGui::Text("(Increases effective camera height for atmospheric calculations)");
-        
-        ImGui::Separator();
-        ImGui::Text("Physical Parameters:");
-        
-        ImGui::SliderFloat("Planet Radius", &mAtmosphereSettings.PlanetRadius, 100.0f, 5000.0f, "%.0f");
-        ImGui::SliderFloat("Atmosphere Radius", &mAtmosphereSettings.AtmosphereRadius, 200.0f, 6000.0f, "%.0f");
-        
-        ImGui::Separator();
-        ImGui::Text("Sun Direction:");
-        ImGui::Checkbox("Animate Sun Direction Y", &mAnimateSunDirection);
-        ImGui::Text("(Animates sun Y from -1 to 1 on sine wave)");
-        ImGui::SliderFloat3("Sun Direction", &mAtmosphereSettings.SunDirection.x, -1.0f, 1.0f, "%.2f");
-        // Increased range for sun angular radius (larger sun is more visible)
-        ImGui::SliderFloat("Sun Angular Radius (rad)", &mAtmosphereSettings.SunAngularRadius, 0.01f, 0.1f, "%.4f");
-        ImGui::Text("(Larger values = bigger sun disk, default ~2 degrees = 0.035)");
-        
-        ImGui::Separator();
-        ImGui::Text("Exponential Height Fog:");
-        bool enableFogBool = mAtmosphereSettings.EnableFog != 0;
-        if (ImGui::Checkbox("Enable Fog", &enableFogBool))
-        {
-            mAtmosphereSettings.EnableFog = enableFogBool ? 1 : 0;
-        }
-        ImGui::SliderFloat("Fog Height", &mAtmosphereSettings.FogHeight, -100.0f, 100.0f, "%.1f");
-        ImGui::ColorEdit3("Fog Color", &mAtmosphereSettings.FogColor.x);
-        ImGui::SliderFloat("Fog Density", &mAtmosphereSettings.FogDensity, 0.0f, 0.5f, "%.3f");
-        ImGui::Text("(Higher = more fog, default 0.05)");
-        ImGui::SliderFloat("Fog Height Falloff", &mAtmosphereSettings.FogHeightFalloff, 0.0f, 1.0f, "%.3f");
-        ImGui::Text("(Higher = fog decreases faster with altitude)");
-        ImGui::SliderFloat("Min Fog Opacity", &mAtmosphereSettings.MinFogOpacity, 0.0f, 1.0f, "%.2f");
-        
-        // Normalize sun direction
-        XMVECTOR sunDir = XMLoadFloat3(&mAtmosphereSettings.SunDirection);
-        sunDir = XMVector3Normalize(sunDir);
-        XMStoreFloat3(&mAtmosphereSettings.SunDirection, sunDir);
-        
-        // Update terrain atmosphere constant buffer when parameters change
-        UpdateTerrainAtmosphereCB();
-        
-        // Presets for clean/dirty atmosphere (updated with GPU Gems 2 values)
-        if (ImGui::Button("Clean Atmosphere (Mountain)"))
-        {
-            mAtmosphereSettings.PollutionLevel = 0.1f;
-            mAtmosphereSettings.DensityMultiplier = 0.8f;
-            mAtmosphereSettings.RayleighScattering = {0.0058f, 0.0135f, 0.0331f};
-            mAtmosphereSettings.MieScattering = {0.0021f, 0.0021f, 0.0021f};
-            mAtmosphereSettings.MieG = -0.75f;
-            mAtmosphereSettings.CameraAltitudeDisplacement = 0.0f;
-            UpdateTerrainAtmosphereCB();
-        }
-        
-        if (ImGui::Button("Dirty Atmosphere (City)"))
-        {
-            mAtmosphereSettings.PollutionLevel = 1.5f;
-            mAtmosphereSettings.DensityMultiplier = 2.0f;
-            mAtmosphereSettings.RayleighScattering = {0.004f, 0.01f, 0.025f};
-            mAtmosphereSettings.MieScattering = {0.005f, 0.005f, 0.005f};
-            mAtmosphereSettings.MieG = -0.85f;
-            mAtmosphereSettings.CameraAltitudeDisplacement = 0.0f;
-            UpdateTerrainAtmosphereCB();
-        }
-        
-        if (ImGui::Button("Space View (High Altitude)"))
-        {
-            mAtmosphereSettings.AtmosphereMode = 1; // Ray Marching
-            mAtmosphereSettings.PollutionLevel = 0.0f;
-            mAtmosphereSettings.DensityMultiplier = 1.0f;
-            mAtmosphereSettings.CameraAltitudeDisplacement = 50000.0f; // High altitude
-            UpdateTerrainAtmosphereCB();
-        }
     }
 }
