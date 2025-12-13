@@ -31,7 +31,7 @@ cbuffer cbTessellation : register(b2)
     float padding2;
 };
 
-// Atmosphere parameters for terrain extinction
+// Atmosphere parameters for terrain extinction and fog
 cbuffer cbAtmosphere : register(b3)
 {
     float3 sunDirection;
@@ -40,7 +40,16 @@ cbuffer cbAtmosphere : register(b3)
     float pollutionLevel;
     float densityMultiplier;
     int atmosphereMode; // 0 = Hoffman-Preetham, 1 = Ray Marching
-    float paddingAtm;
+    float SunIntensity; // Sun intensity for terrain lighting
+    // Exponential Height Fog parameters
+    float FogHeight;
+    float FogDensity;
+    float FogHeightFalloff;
+    float MinFogOpacity;
+    float3 FogColor;
+    float paddingFog0;
+    int EnableFog;
+    float paddingFog1[3];
 };
 
 // Textures
@@ -70,6 +79,7 @@ struct DomainOut
 {
     float4 PosH : SV_POSITION;
     float3 PosW : WORLDPOS;
+    float3 NormalW : NORMAL;
     float2 TexCoord : TEXCOORD;
 };
 
@@ -273,20 +283,47 @@ DomainOut DS(PatchTess patchTess, float2 uv : SV_DomainLocation, const OutputPat
     // This is why we sample height in domain shader - each tessellated vertex gets correct height
     posL.y = height;
     
-    // [[Terrain-shader-pipeline]] STEP 6: Transform to world space
+    // [[Terrain-shader-pipeline]] STEP 6: Calculate normal from heightmap gradient
+    // Sample neighboring heights to calculate normal using central differences
+    // This gives us the terrain slope for proper directional lighting
+    float texelSize = 1.0 / (float)heightmapWidth;
+    
+    // Sample heights at neighboring texels
+    float heightL = heightmapTexture.SampleLevel(gSampler, texCoord + float2(-texelSize, 0), 0).r * heightScale;
+    float heightR = heightmapTexture.SampleLevel(gSampler, texCoord + float2(texelSize, 0), 0).r * heightScale;
+    float heightD = heightmapTexture.SampleLevel(gSampler, texCoord + float2(0, -texelSize), 0).r * heightScale;
+    float heightU = heightmapTexture.SampleLevel(gSampler, texCoord + float2(0, texelSize), 0).r * heightScale;
+    
+    // Calculate gradient (slope) in X and Z directions
+    // World space distance between samples: terrain spans terrainSize, texture spans 1.0
+    float worldTexelSize = terrainSize / (float)heightmapWidth;
+    float dx = (heightR - heightL) / (2.0 * worldTexelSize);
+    float dz = (heightU - heightD) / (2.0 * worldTexelSize);
+    
+    // Create normal vector from gradient
+    // Normal = (-gradient_x, 1.0, -gradient_z) normalized
+    // This gives us a normal pointing in the direction of steepest ascent
+    float3 normalL = normalize(float3(-dx, 1.0, -dz));
+    
+    // [[Terrain-shader-pipeline]] STEP 7: Transform to world space
     // gWorld is identity matrix for terrain (terrain is already in world space)
     // This transformation is included for consistency with other objects
     // The world position is stored for pixel shader (lighting calculations)
     float4 posW = mul(float4(posL, 1.0f), gWorld);
     dout.PosW = posW.xyz;
     
-    // [[Terrain-shader-pipeline]] STEP 7: Transform to homogeneous clip space
+    // Transform normal to world space (assuming no scaling in gWorld)
+    float3x3 worldNormalMatrix = (float3x3)gWorld;
+    dout.NormalW = mul(normalL, worldNormalMatrix);
+    dout.NormalW = normalize(dout.NormalW);
+    
+    // [[Terrain-shader-pipeline]] STEP 8: Transform to homogeneous clip space
     // gViewProj combines view and projection matrices
     // This transforms from world space to clip space for rasterization
     // Clip space coordinates are used by the GPU for clipping and perspective division
     dout.PosH = mul(posW, gViewProj);
     
-    // [[Terrain-shader-pipeline]] STEP 8: Store texture coordinates
+    // [[Terrain-shader-pipeline]] STEP 9: Store texture coordinates
     // These will be used by the pixel shader for texture sampling
     // The coordinates are interpolated across the triangle during rasterization
     dout.TexCoord = texCoord;
@@ -317,6 +354,92 @@ float3 CalculateAtmosphericExtinction(float3 worldPos, float3 viewDir)
     }
 }
 
+// Calculate sky color based on view direction (for fog inscattering)
+// Simplified version matching the atmosphere shader's sky color calculation
+float3 CalculateSkyColor(float3 viewDir)
+{
+    // Normalize sun direction (points FROM sun, so negate to get direction TO sun)
+    float3 sunDir = normalize(-sunDirection);
+    float cosTheta = dot(viewDir, sunDir);
+    
+    // Calculate view elevation for sky gradient
+    float3 up = float3(0, 1, 0);
+    float viewElevation = dot(viewDir, up); // -1 = down, 0 = horizon, 1 = up
+    
+    // Sky color gradient (horizon to zenith)
+    float3 horizonColor = float3(0.7, 0.8, 1.0); // Light blue/white at horizon
+    float3 zenithColor = float3(0.15, 0.25, 0.5);  // Deep blue at zenith
+    
+    // Convert view elevation from [-1, 1] to [0, 1] for interpolation
+    float elevationFactor = saturate((viewElevation + 1.0) * 0.5);
+    elevationFactor = pow(elevationFactor, 0.7); // Slight curve for more natural gradient
+    
+    // Base sky color from gradient
+    float3 baseSkyColor = lerp(horizonColor, zenithColor, elevationFactor);
+    
+    // Simplified sky color (without full scattering calculations for performance)
+    // Use base gradient with some sun influence
+    float sunInfluence = max(0.0, cosTheta) * 0.3; // Sun adds brightness when visible
+    float3 skyColor = baseSkyColor * (0.5 + sunInfluence);
+    
+    // Ensure minimum brightness
+    float3 minSkyColor = baseSkyColor * 0.1;
+    skyColor = max(skyColor, minSkyColor);
+    
+    return skyColor;
+}
+
+// Exponential Height Fog calculation
+// Based on standard exponential height fog model
+// Applied as post-effect to terrain rendering
+float CalculateExponentialHeightFog(float3 rayOrigin, float3 rayDirection, float rayLength, out float3 fogInscattering)
+{
+    if (EnableFog == 0 || FogDensity <= 0.0)
+    {
+        fogInscattering = float3(0, 0, 0);
+        return 1.0; // No fog, full transmittance
+    }
+    
+    // Get vertical component of ray direction (Y is up)
+    float rayDirectionZ = rayDirection.y; // Y component is vertical
+    
+    // Calculate falloff factor
+    // Clamp to prevent numerical issues with exp2
+    float falloff = max(-127.0, FogHeightFalloff * rayDirectionZ);
+    
+    // Calculate line integral for exponential fog
+    // Direct calculation
+    float lineIntegral = (1.0 - exp2(-falloff)) / falloff;
+    
+    // Taylor expansion around 0 for numerical stability when falloff is near zero
+    float log2 = 0.69314718056; // log(2.0)
+    float lineIntegralTaylor = log2 - (0.5 * log2 * log2) * falloff;
+    
+    // Use Taylor expansion when falloff is very close to zero
+    float FLT_EPSILON2 = 0.0001;
+    float finalLineIntegral = abs(falloff) > FLT_EPSILON2 ? lineIntegral : lineIntegralTaylor;
+    
+    // Calculate fog density at ray origin
+    float rayOriginHeight = rayOrigin.y - FogHeight; // Height relative to fog reference
+    float rayOriginTerms = FogDensity * exp2(-FogHeightFalloff * rayOriginHeight);
+    
+    // Calculate exponential height line integral
+    float exponentialHeightLineIntegral = rayOriginTerms * finalLineIntegral;
+    
+    // Scale by ray length
+    exponentialHeightLineIntegral *= rayLength;
+    
+    // Calculate fog factor (transmittance)
+    float expFogFactor = max(saturate(exp2(-exponentialHeightLineIntegral)), MinFogOpacity);
+    
+    // Calculate fog inscattering color using sky color
+    // Fog should blend with the sky color, not a fixed color
+    float3 skyColor = CalculateSkyColor(rayDirection);
+    fogInscattering = skyColor * (1.0 - expFogFactor) * 0.3; // Use sky color for fog
+    
+    return expFogFactor;
+}
+
 // [[Terrain-shader-pipeline]] Pixel Shader - Final stage in the pipeline
 // This function runs ONCE per pixel (fragment)
 // Purpose: Determine the final color that will be written to the render target
@@ -338,24 +461,45 @@ float4 PS(DomainOut pin) : SV_Target
     // Linear filtering provides smooth color transitions
     float4 texColor = terrainTexture.Sample(gSampler, pin.TexCoord);
     
-    // [[Terrain-shader-pipeline]] STEP 2: Apply simple height-based lighting
-    // This creates a basic depth cue: darker at lower elevations, brighter at higher elevations
-    // Height-based lighting is a simple approximation that doesn't require light calculations
-    // It helps with depth perception without the cost of full lighting
-    //
-    // Calculate height factor:
-    // pin.PosW.y is the world-space Y coordinate (height)
-    // Dividing by heightScale normalizes to [0, 1] range
-    // Multiplying by 0.5 and adding 0.5 creates a factor in [0.5, 1.0] range
-    // This ensures terrain is never completely black (minimum 50% brightness)
-    float normalizedHeight = pin.PosW.y / heightScale;  // [0, 1]
-    float heightFactor = normalizedHeight * 0.5f + 0.5f;  // [0.5, 1.0]
+    // [[Directional-lighting]] STEP 2: Calculate directional lighting from sun
+    // Use normal-based lighting with sun direction for realistic terrain shading
+    // sunDirection points FROM sun TO planet center
+    // For lighting, we need direction FROM sun TO surface
+    // Since sun is far away, direction from sun to planet ≈ direction from sun to surface
+    float3 normal = normalize(pin.NormalW);
+    // sunDirection already points FROM sun, so use it directly for light direction
+    float3 lightDir = normalize(-sunDirection); // Direction FROM sun (light source direction)
     
-    // [[Terrain-shader-pipeline]] Apply height factor to texture color
-    // Lower elevations: darker (heightFactor closer to 0.5)
-    // Higher elevations: brighter (heightFactor closer to 1.0)
-    // This creates a natural depth cue that helps visualize terrain elevation
-    texColor.rgb *= heightFactor;
+    // Calculate N dot L (lambertian diffuse lighting)
+    // Positive NdotL means surface faces the light
+    float NdotL = max(dot(normal, lightDir), 0.0);
+    
+    // Ambient lighting to prevent complete darkness
+    // Ambient is scaled by sun intensity to maintain realistic lighting balance
+    // When sun is brighter, ambient should also increase slightly (indirect lighting)
+    float ambientBase = 0.2; // Base ambient level
+    float ambientScale = 0.1 + saturate(SunIntensity / 200.0) * 0.2; // Scale ambient with sun (0.1 to 0.3 range)
+    float ambient = ambientBase + ambientScale;
+    ambient = min(ambient, 0.4); // Cap ambient to prevent over-brightening
+    
+    // Combine ambient and directional lighting
+    // SunIntensity directly scales the directional lighting contribution
+    // Normalize sun intensity: 0 = no directional light, 200 = full directional light
+    // Use a curve that makes lower values more noticeable
+    float sunIntensityFactor = saturate(SunIntensity / 100.0); // Normalize to [0, 2] range, then clamp
+    sunIntensityFactor = pow(sunIntensityFactor, 0.7); // Apply power curve for more natural response
+    
+    // Directional light contribution scales with sun intensity
+    // When SunIntensity = 0, directional light = 0 (only ambient)
+    // When SunIntensity = 100, directional light = NdotL (full effect)
+    // When SunIntensity = 200, directional light = NdotL * 1.5 (brighter)
+    float directionalLight = NdotL * (0.5 + sunIntensityFactor * 1.0);
+    
+    // Combine ambient and directional lighting
+    float lightingFactor = ambient + (1.0 - ambient) * directionalLight;
+    
+    // Apply lighting to texture color
+    texColor.rgb *= lightingFactor;
     
     // [[Atmosphere-integration]] Apply atmospheric extinction
     // Atmospheric extinction makes distant objects fade to sky color
@@ -363,6 +507,15 @@ float4 PS(DomainOut pin) : SV_Target
     float3 viewDir = normalize(cameraPosition - pin.PosW);
     float3 extinction = CalculateAtmosphericExtinction(pin.PosW, viewDir);
     texColor.rgb *= extinction;
+    
+    // [[Exponential-Height-Fog]] Apply exponential height fog as post-effect
+    float3 fogInscattering;
+    float3 rayOrigin = cameraPosition;
+    float rayLength = length(pin.PosW - rayOrigin);
+    float fogFactor = CalculateExponentialHeightFog(rayOrigin, viewDir, rayLength, fogInscattering);
+    
+    // Blend fog with terrain color: FinalColor = TerrainColor * FogTransmittance + FogInscattering
+    texColor.rgb = texColor.rgb * fogFactor + fogInscattering;
     
     return texColor;
 }

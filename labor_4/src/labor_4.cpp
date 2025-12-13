@@ -250,7 +250,7 @@ private:
         DirectX::XMFLOAT4X4 View;
         DirectX::XMFLOAT4X4 Projection;
         DirectX::XMFLOAT3 CameraPos;
-        float padding0;
+        float CameraAltitudeDisplacement; // Artificial altitude offset for better atmospheric calculations
         DirectX::XMFLOAT3 SunDirection;
         float padding1;
         DirectX::XMFLOAT3 PlanetCenter;
@@ -262,10 +262,20 @@ private:
         DirectX::XMFLOAT3 MieScattering;
         float MieG;
         float SunIntensity;
-        int AtmosphereMode; // 0 = Hoffman-Preetham, 1 = Ray Marching
-        float DensityMultiplier;
-        float PollutionLevel;
-        float padding4;
+    int AtmosphereMode; // 0 = Hoffman-Preetham, 1 = Ray Marching
+    float DensityMultiplier;
+    float PollutionLevel;
+    float SunAngularRadius; // Angular radius of sun disk in radians
+    float padding4;
+    // Exponential Height Fog parameters (used by terrain shader)
+    float FogHeight; // Reference height for fog
+    float FogDensity; // Fog density multiplier
+    float FogHeightFalloff; // How quickly fog density changes with height
+    float MinFogOpacity; // Minimum fog opacity
+    DirectX::XMFLOAT3 FogColor; // Fog inscattering color
+    float padding5;
+    int EnableFog; // Enable/disable exponential height fog (1 = enabled, 0 = disabled)
+    float padding6[3];
     };
     
     AtmosphereParams mAtmosphereSettings;
@@ -283,7 +293,16 @@ private:
         float pollutionLevel;
         float densityMultiplier;
         int atmosphereMode;
-        float paddingAtm;
+        float SunIntensity; // Sun intensity for terrain lighting
+        // Exponential Height Fog parameters for terrain
+        float FogHeight;
+        float FogDensity;
+        float FogHeightFalloff;
+        float MinFogOpacity;
+        DirectX::XMFLOAT3 FogColor;
+        float paddingFog0;
+        int EnableFog;
+        float paddingFog1[3];
     };
     std::unique_ptr<UploadBuffer<TerrainAtmosphereConstants>> mTerrainAtmosphereCB = nullptr;
 };
@@ -398,7 +417,8 @@ bool Labor4App::Initialize()
     mCamera.LookAt(XMVectorSet(0.0f, 2.0f, -5.0f, 0.0f), 
                    XMVectorSet(0.0f, 0.0f, 0.0f, 0.0f), 
                    XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
-    mCamera.SetLens(0.25f*MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
+    // Increased far plane to accommodate sky dome (radius 1000.0f needs at least 2000.0f far plane)
+    mCamera.SetLens(0.25f*MathHelper::Pi, AspectRatio(), 1.0f, 20000.0f);
     mCamera.UpdateViewMatrix();
     
     // Initialize pass constant buffer with default terrain values
@@ -562,11 +582,13 @@ void Labor4App::Draw(const GameTimer& gt)
         D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
 
     // [[Rendering-pipeline]] STEP 5: Clear render target and depth buffer
-    // Clear render target: Fills with background color (LightSteelBlue)
+    // Clear render target: Fills with black background (atmosphere will render over it)
     // Clear depth buffer: Sets all depth values to 1.0 (far plane = maximum depth)
     // Clear stencil buffer: Sets all stencil values to 0
     // Clearing ensures we start with a clean slate each frame
-    mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::LightSteelBlue, 0, nullptr);
+    // If atmosphere is enabled, it will render as the background; otherwise black background is shown
+    float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f }; // Black background
+    mCommandList->ClearRenderTargetView(CurrentBackBufferView(), clearColor, 0, nullptr);
     mCommandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
 
     // [[Rendering-pipeline]] STEP 6: Set render targets
@@ -1871,21 +1893,37 @@ void Labor4App::InitializeAtmosphere()
 {
     // Initialize default atmosphere parameters
     mAtmosphereSettings.CameraPos = { 0, 0, 0 };
-    mAtmosphereSettings.SunDirection = { 0.5f, -1.0f, 0.5f };
+    // Sun direction: points FROM sun TO planet (normalized)
+    // For a sun in the sky, we want it coming from above and to the side
+    mAtmosphereSettings.SunDirection = { 0.3f, -0.8f, 0.5f }; // Sun from upper-right
     XMVECTOR sunDir = XMLoadFloat3(&mAtmosphereSettings.SunDirection);
     sunDir = XMVector3Normalize(sunDir);
     XMStoreFloat3(&mAtmosphereSettings.SunDirection, sunDir);
     
-    mAtmosphereSettings.PlanetCenter = { 0, -6371000.0f, 0 }; // Earth radius in meters
-    mAtmosphereSettings.AtmosphereRadius = 6471000.0f;
-    mAtmosphereSettings.PlanetRadius = 6371000.0f;
+    // Smaller planet/atmosphere for better visualization
+    mAtmosphereSettings.PlanetCenter = { 0, -1000.0f, 0 }; // Planet center
+    mAtmosphereSettings.PlanetRadius = 1000.0f; // Planet radius
+    mAtmosphereSettings.AtmosphereRadius = 1100.0f; // Atmosphere radius (100 units above planet)
+    // Realistic Rayleigh scattering coefficients based on GPU Gems 2 Chapter 16
+    // Reference: https://developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-16-accurate-atmospheric-scattering
+    // Scaled for rendering (original values are 5.8e-6, 1.35e-5, 3.31e-5)
+    // Blue is strongest (why sky is blue), red is weakest
     mAtmosphereSettings.RayleighScattering = { 0.0058f, 0.0135f, 0.0331f }; // RGB scattering coefficients
-    mAtmosphereSettings.MieScattering = { 0.000399f, 0.000399f, 0.000399f };
-    mAtmosphereSettings.MieG = 0.8f;
+    mAtmosphereSettings.MieScattering = { 0.0021f, 0.0021f, 0.0021f }; // Increased from 0.000399 for more visible effect
+    mAtmosphereSettings.MieG = -0.75f; // Negative for aerosols (GPU Gems 2: -0.75 to -0.999)
     mAtmosphereSettings.SunIntensity = 20.0f;
     mAtmosphereSettings.AtmosphereMode = 0; // Default to Hoffman-Preetham
     mAtmosphereSettings.DensityMultiplier = 1.0f;
-    mAtmosphereSettings.PollutionLevel = 0.3f; // Slightly polluted by default
+    mAtmosphereSettings.PollutionLevel = 0.1f; // Reduced pollution for cleaner, bluer sky
+    mAtmosphereSettings.SunAngularRadius = 0.035f; // ~2 degrees (much more visible than 0.27 degrees)
+    mAtmosphereSettings.CameraAltitudeDisplacement = 0.0f; // No displacement by default
+    // Exponential Height Fog defaults
+    mAtmosphereSettings.FogHeight = 0.0f; // Fog at ground level
+    mAtmosphereSettings.FogDensity = 0.05f; // Moderate fog density
+    mAtmosphereSettings.FogHeightFalloff = 0.2f; // Moderate height falloff
+    mAtmosphereSettings.MinFogOpacity = 0.0f; // No minimum opacity
+    mAtmosphereSettings.FogColor = { 0.9f, 0.95f, 1.0f }; // Light blue fog color
+    mAtmosphereSettings.EnableFog = 1; // Enable fog by default (1 = enabled)
     
     // Build atmosphere components
     BuildAtmosphereRootSignature();
@@ -1937,7 +1975,9 @@ void Labor4App::BuildAtmosphereShaders()
 void Labor4App::BuildSkyDomeGeometry()
 {
     GeometryGenerator geoGen;
-    GeometryGenerator::MeshData sphere = geoGen.CreateSphere(10000.0f, 20, 40); // Large sphere for sky dome
+    // Sky dome radius - smaller to avoid culling issues
+    // Using 500.0f radius ensures it's always visible and not culled
+    GeometryGenerator::MeshData sphere = geoGen.CreateSphere(500.0f, 20, 40); // Sky dome sphere
     
     std::vector<DirectX::XMFLOAT3> vertices;
     vertices.reserve(sphere.Vertices.size());
@@ -2005,14 +2045,21 @@ void Labor4App::BuildAtmospherePSO()
         reinterpret_cast<BYTE*>(mShaders["atmospherePS"]->GetBufferPointer()),
         mShaders["atmospherePS"]->GetBufferSize()
     };
-    psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+    // Rasterizer state: disable culling for sky dome (we're rendering the inside of the sphere)
+    // Sky dome sphere has outward-facing normals, but we're inside looking out
+    // Disable culling to ensure all faces render correctly
+    D3D12_RASTERIZER_DESC rasterizerDesc = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+    rasterizerDesc.CullMode = D3D12_CULL_MODE_NONE; // Disable culling for sky dome
+    psoDesc.RasterizerState = rasterizerDesc;
     psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
     
-    // Depth stencil state: enable depth test but don't write to depth buffer
+    // Depth stencil state: disable depth test and write for sky dome
+    // Sky dome should always render as background, so we disable depth testing
+    // This ensures the sky is always visible behind terrain
     D3D12_DEPTH_STENCIL_DESC depthStencilDesc = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
-    depthStencilDesc.DepthEnable = TRUE;
+    depthStencilDesc.DepthEnable = FALSE; // Disable depth test for sky dome
     depthStencilDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO; // Don't write to depth buffer
-    depthStencilDesc.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+    depthStencilDesc.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS; // Always pass (not used since DepthEnable is FALSE)
     psoDesc.DepthStencilState = depthStencilDesc;
     
     psoDesc.SampleMask = UINT_MAX;
@@ -2027,8 +2074,10 @@ void Labor4App::BuildAtmospherePSO()
 
 void Labor4App::UpdateAtmosphereCB()
 {
-    // Update camera position
+    // Update camera position with altitude displacement
+    // This allows simulating higher altitude views for better atmospheric scattering
     XMFLOAT3 camPos = mCamera.GetPosition3f();
+    camPos.y += mAtmosphereSettings.CameraAltitudeDisplacement; // Add artificial altitude
     mAtmosphereSettings.CameraPos = camPos;
     
     // Update view and projection matrices
@@ -2053,7 +2102,18 @@ void Labor4App::UpdateTerrainAtmosphereCB()
     terrainAtm.pollutionLevel = mAtmosphereSettings.PollutionLevel;
     terrainAtm.densityMultiplier = mAtmosphereSettings.DensityMultiplier;
     terrainAtm.atmosphereMode = mAtmosphereSettings.AtmosphereMode;
-    terrainAtm.paddingAtm = 0.0f;
+    terrainAtm.SunIntensity = mAtmosphereSettings.SunIntensity;
+    // Copy fog parameters to terrain constant buffer
+    terrainAtm.FogHeight = mAtmosphereSettings.FogHeight;
+    terrainAtm.FogDensity = mAtmosphereSettings.FogDensity;
+    terrainAtm.FogHeightFalloff = mAtmosphereSettings.FogHeightFalloff;
+    terrainAtm.MinFogOpacity = mAtmosphereSettings.MinFogOpacity;
+    terrainAtm.FogColor = mAtmosphereSettings.FogColor;
+    terrainAtm.paddingFog0 = 0.0f;
+    terrainAtm.EnableFog = mAtmosphereSettings.EnableFog;
+    terrainAtm.paddingFog1[0] = 0.0f;
+    terrainAtm.paddingFog1[1] = 0.0f;
+    terrainAtm.paddingFog1[2] = 0.0f;
     
     mTerrainAtmosphereCB->CopyData(0, terrainAtm);
 }
@@ -2106,26 +2166,53 @@ void Labor4App::RenderAtmosphereGUI()
         ImGui::Separator();
         ImGui::Text("Environmental Parameters:");
         
-        ImGui::SliderFloat("Pollution Level", &mAtmosphereSettings.PollutionLevel, 0.0f, 1.0f, "%.2f");
-        ImGui::SliderFloat("Density Multiplier", &mAtmosphereSettings.DensityMultiplier, 0.1f, 5.0f, "%.2f");
-        ImGui::SliderFloat("Sun Intensity", &mAtmosphereSettings.SunIntensity, 0.0f, 100.0f, "%.1f");
+        ImGui::SliderFloat("Pollution Level", &mAtmosphereSettings.PollutionLevel, 0.0f, 2.0f, "%.2f");
+        ImGui::SliderFloat("Density Multiplier", &mAtmosphereSettings.DensityMultiplier, 0.1f, 10.0f, "%.2f");
+        // Increased range for sun intensity to make it more influential
+        ImGui::SliderFloat("Sun Intensity", &mAtmosphereSettings.SunIntensity, 0.0f, 200.0f, "%.1f");
         
         ImGui::Separator();
         ImGui::Text("Scattering Parameters:");
         
-        ImGui::SliderFloat3("Rayleigh Scattering", &mAtmosphereSettings.RayleighScattering.x, 0.0f, 0.1f, "%.4f");
-        ImGui::SliderFloat3("Mie Scattering", &mAtmosphereSettings.MieScattering.x, 0.0f, 0.01f, "%.4f");
-        ImGui::SliderFloat("Mie G (Phase)", &mAtmosphereSettings.MieG, 0.0f, 0.99f, "%.2f");
+        // Increased ranges for more visible effects (based on GPU Gems 2)
+        ImGui::SliderFloat3("Rayleigh Scattering", &mAtmosphereSettings.RayleighScattering.x, 0.0f, 0.1f, "%.5f");
+        ImGui::SliderFloat3("Mie Scattering", &mAtmosphereSettings.MieScattering.x, 0.0f, 0.01f, "%.5f");
+        // Mie G for aerosols should be negative (-0.75 to -0.999 per GPU Gems 2)
+        ImGui::SliderFloat("Mie G (Phase)", &mAtmosphereSettings.MieG, -0.99f, 0.0f, "%.3f");
+        
+        ImGui::Separator();
+        ImGui::Text("Camera Settings:");
+        // Camera altitude displacement for better atmospheric calculations at higher altitudes
+        ImGui::SliderFloat("Camera Altitude Displacement (m)", &mAtmosphereSettings.CameraAltitudeDisplacement, 0.0f, 100000.0f, "%.0f");
+        ImGui::Text("(Increases effective camera height for atmospheric calculations)");
         
         ImGui::Separator();
         ImGui::Text("Physical Parameters:");
         
-        ImGui::SliderFloat("Planet Radius (km)", &mAtmosphereSettings.PlanetRadius, 6000000.0f, 7000000.0f, "%.0f");
-        ImGui::SliderFloat("Atmosphere Height (km)", &mAtmosphereSettings.AtmosphereRadius, 6400000.0f, 7000000.0f, "%.0f");
+        ImGui::SliderFloat("Planet Radius", &mAtmosphereSettings.PlanetRadius, 100.0f, 5000.0f, "%.0f");
+        ImGui::SliderFloat("Atmosphere Radius", &mAtmosphereSettings.AtmosphereRadius, 200.0f, 6000.0f, "%.0f");
         
         ImGui::Separator();
         ImGui::Text("Sun Direction:");
         ImGui::SliderFloat3("Sun Direction", &mAtmosphereSettings.SunDirection.x, -1.0f, 1.0f, "%.2f");
+        // Increased range for sun angular radius (larger sun is more visible)
+        ImGui::SliderFloat("Sun Angular Radius (rad)", &mAtmosphereSettings.SunAngularRadius, 0.01f, 0.1f, "%.4f");
+        ImGui::Text("(Larger values = bigger sun disk, default ~2 degrees = 0.035)");
+        
+        ImGui::Separator();
+        ImGui::Text("Exponential Height Fog:");
+        bool enableFogBool = mAtmosphereSettings.EnableFog != 0;
+        if (ImGui::Checkbox("Enable Fog", &enableFogBool))
+        {
+            mAtmosphereSettings.EnableFog = enableFogBool ? 1 : 0;
+        }
+        ImGui::SliderFloat("Fog Height", &mAtmosphereSettings.FogHeight, -100.0f, 100.0f, "%.1f");
+        ImGui::ColorEdit3("Fog Color", &mAtmosphereSettings.FogColor.x);
+        ImGui::SliderFloat("Fog Density", &mAtmosphereSettings.FogDensity, 0.0f, 0.5f, "%.3f");
+        ImGui::Text("(Higher = more fog, default 0.05)");
+        ImGui::SliderFloat("Fog Height Falloff", &mAtmosphereSettings.FogHeightFalloff, 0.0f, 1.0f, "%.3f");
+        ImGui::Text("(Higher = fog decreases faster with altitude)");
+        ImGui::SliderFloat("Min Fog Opacity", &mAtmosphereSettings.MinFogOpacity, 0.0f, 1.0f, "%.2f");
         
         // Normalize sun direction
         XMVECTOR sunDir = XMLoadFloat3(&mAtmosphereSettings.SunDirection);
@@ -2135,30 +2222,35 @@ void Labor4App::RenderAtmosphereGUI()
         // Update terrain atmosphere constant buffer when parameters change
         UpdateTerrainAtmosphereCB();
         
-        // Presets for clean/dirty atmosphere
+        // Presets for clean/dirty atmosphere (updated with GPU Gems 2 values)
         if (ImGui::Button("Clean Atmosphere (Mountain)"))
         {
             mAtmosphereSettings.PollutionLevel = 0.1f;
             mAtmosphereSettings.DensityMultiplier = 0.8f;
-            mAtmosphereSettings.RayleighScattering = {0.0065f, 0.015f, 0.035f};
-            mAtmosphereSettings.MieScattering = {0.0002f, 0.0002f, 0.0002f};
+            mAtmosphereSettings.RayleighScattering = {0.0058f, 0.0135f, 0.0331f};
+            mAtmosphereSettings.MieScattering = {0.0021f, 0.0021f, 0.0021f};
+            mAtmosphereSettings.MieG = -0.75f;
+            mAtmosphereSettings.CameraAltitudeDisplacement = 0.0f;
             UpdateTerrainAtmosphereCB();
         }
         
         if (ImGui::Button("Dirty Atmosphere (City)"))
         {
-            mAtmosphereSettings.PollutionLevel = 0.8f;
-            mAtmosphereSettings.DensityMultiplier = 1.5f;
+            mAtmosphereSettings.PollutionLevel = 1.5f;
+            mAtmosphereSettings.DensityMultiplier = 2.0f;
             mAtmosphereSettings.RayleighScattering = {0.004f, 0.01f, 0.025f};
-            mAtmosphereSettings.MieScattering = {0.0006f, 0.0006f, 0.0006f};
+            mAtmosphereSettings.MieScattering = {0.005f, 0.005f, 0.005f};
+            mAtmosphereSettings.MieG = -0.85f;
+            mAtmosphereSettings.CameraAltitudeDisplacement = 0.0f;
             UpdateTerrainAtmosphereCB();
         }
         
-        if (ImGui::Button("Space View"))
+        if (ImGui::Button("Space View (High Altitude)"))
         {
             mAtmosphereSettings.AtmosphereMode = 1; // Ray Marching
             mAtmosphereSettings.PollutionLevel = 0.0f;
             mAtmosphereSettings.DensityMultiplier = 1.0f;
+            mAtmosphereSettings.CameraAltitudeDisplacement = 50000.0f; // High altitude
             UpdateTerrainAtmosphereCB();
         }
     }
