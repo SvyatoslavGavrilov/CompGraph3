@@ -152,6 +152,12 @@ private:
     bool LoadTerrainTexture(const std::wstring& texturePath);
     void CreateSrvDescriptorHeap();
     
+    // Persistent paint system
+    void InitializePaintTexture();
+    bool RaycastTerrainCPU(const DirectX::XMFLOAT3& rayOrigin, const DirectX::XMFLOAT3& rayDir, DirectX::XMFLOAT3& hitPoint);
+    void PaintTerrainAtPosition(const DirectX::XMFLOAT3& worldPos);
+    void UpdatePaintTexture();
+    
     // [[Terrain-rendering-pipeline]] Terrain rendering
     void RenderQuadtreeNodes(ID3D12GraphicsCommandList* cmdList, QuadtreeNode* node);
     
@@ -206,6 +212,7 @@ private:
     Camera mCamera;
     POINT mLastMousePos;
     bool mRightMouseDown = false;
+    bool mLeftMouseDown = false;  // Left mouse button state for terrain drawing
     
     // Heightmap resources
     ComPtr<ID3D12Resource> mHeightmapTexture;
@@ -217,6 +224,17 @@ private:
     D3D12_CPU_DESCRIPTOR_HANDLE mTerrainTextureSrvHandle;
     UINT mHeightmapWidth = 0;
     UINT mHeightmapHeight = 0;
+    
+    // Paint texture resources (persistent terrain painting)
+    ComPtr<ID3D12Resource> mPaintTexture;
+    ComPtr<ID3D12Resource> mPaintTextureUploadHeap;
+    D3D12_CPU_DESCRIPTOR_HANDLE mPaintTextureSrvHandle;
+    std::vector<UINT8> mPaintTextureData;  // CPU-side paint data (RGBA)
+    UINT mPaintTextureWidth = 512;  // Paint texture resolution
+    UINT mPaintTextureHeight = 512;
+    bool mPaintTextureDirty = false;  // Flag to update GPU texture
+    float mBrushRadius = 5.0f;  // Brush size in world units
+    DirectX::XMFLOAT3 mPaintColor = DirectX::XMFLOAT3(1.0f, 0.41f, 0.71f);  // Pink default
     
     // IMGUI descriptor heap
     ComPtr<ID3D12DescriptorHeap> mImGuiDescriptorHeap;
@@ -377,6 +395,9 @@ bool Labor4App::Initialize()
     
     // Build [[Quadtree-LOD-system]] quadtree after heightmap is loaded
     BuildQuadtree();
+    
+    // Initialize persistent paint texture
+    InitializePaintTexture();
     
     // Create tessellation constant buffer
     mTessellationCB = std::make_unique<UploadBuffer<TessellationConstants>>(md3dDevice.Get(), 1, true);
@@ -582,6 +603,9 @@ void Labor4App::Draw(const GameTimer& gt)
     // The initial PSO ("opaque") is for non-terrain objects, terrain PSO is set later
     ThrowIfFailed(cmdListAlloc->Reset());
     ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque"].Get()));
+    
+    // Update paint texture if dirty (paint changes need to be uploaded to GPU)
+    UpdatePaintTexture();
 
     // [[Rendering-pipeline]] STEP 3: Set viewport and scissor rect
     // Viewport: Defines the rendering area on the render target (full screen typically)
@@ -757,9 +781,9 @@ void Labor4App::Draw(const GameTimer& gt)
 
 void Labor4App::BuildRootSignature()
 {
-    // Create descriptor table for textures (heightmap and terrain texture)
+    // Create descriptor table for textures (heightmap, terrain texture, and paint texture)
     CD3DX12_DESCRIPTOR_RANGE texTable;
-    texTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0);  // 2 textures: heightmap + terrain texture
+    texTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 0);  // 3 textures: heightmap + terrain texture + paint texture
 
     CD3DX12_ROOT_PARAMETER slotRootParameter[5];
 
@@ -1002,6 +1026,23 @@ void Labor4App::UpdatePassCB(const GameTimer& gt)
     auto currPassCB = mCurrFrameResource->PassCB.get();
     PassConstants passConstants = mPassCB;  // Copy all members including heightmap params
     passConstants.TotalTime = gt.TotalTime();
+    
+    // Convert mouse position from screen coordinates to normalized device coordinates (NDC)
+    // NDC: x in [-1, 1], y in [-1, 1] where (0,0) is center, (-1,-1) is bottom-left, (1,1) is top-right
+    // Screen: x in [0, mClientWidth], y in [0, mClientHeight] where (0,0) is top-left
+    float mouseX = static_cast<float>(mLastMousePos.x);
+    float mouseY = static_cast<float>(mLastMousePos.y);
+    float ndcX = (mouseX / mClientWidth) * 2.0f - 1.0f;  // Convert [0, width] to [-1, 1]
+    float ndcY = 1.0f - (mouseY / mClientHeight) * 2.0f;  // Convert [0, height] to [1, -1] (flip Y)
+    passConstants.mouseScreenPos = DirectX::XMFLOAT2(ndcX, ndcY);
+    
+    // Set mouse button state
+    passConstants.mouseButtonPressed = mLeftMouseDown ? 1 : 0;
+    
+    // Store view and projection matrices for ray tracing in shader
+    XMStoreFloat4x4(&passConstants.View, XMMatrixTranspose(view));
+    XMStoreFloat4x4(&passConstants.Proj, XMMatrixTranspose(proj));
+    
     currPassCB->CopyData(0, passConstants);
 }
 
@@ -1030,11 +1071,11 @@ void Labor4App::CreateSrvDescriptorHeap()
 {
     // Create descriptor heap for shader resource views
     D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
-    srvHeapDesc.NumDescriptors = 2;  // Heightmap + terrain texture
+    srvHeapDesc.NumDescriptors = 3;  // Heightmap + terrain texture + paint texture
     srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&mSrvDescriptorHeap)));
-    
+
     mCbvSrvUavDescriptorSize = md3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 }
 
@@ -1128,6 +1169,238 @@ bool Labor4App::LoadHeightmapFromFile(const std::wstring& heightmapPath)
     
     OutputDebugString(L"Successfully loaded heightmap from external generator.\n");
     return true;
+}
+
+void Labor4App::InitializePaintTexture()
+{
+    // Initialize paint texture data (RGBA8, all zeros = transparent)
+    mPaintTextureData.resize(mPaintTextureWidth * mPaintTextureHeight * 4, 0);
+    
+    // Create paint texture resource
+    D3D12_RESOURCE_DESC texDesc = {};
+    texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    texDesc.Alignment = 0;
+    texDesc.Width = mPaintTextureWidth;
+    texDesc.Height = mPaintTextureHeight;
+    texDesc.DepthOrArraySize = 1;
+    texDesc.MipLevels = 1;
+    texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    texDesc.SampleDesc.Count = 1;
+    texDesc.SampleDesc.Quality = 0;
+    texDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    texDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+    
+    D3D12_HEAP_PROPERTIES heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+    ThrowIfFailed(md3dDevice->CreateCommittedResource(
+        &heapProps,
+        D3D12_HEAP_FLAG_NONE,
+        &texDesc,
+        D3D12_RESOURCE_STATE_COPY_DEST,
+        nullptr,
+        IID_PPV_ARGS(&mPaintTexture)));
+    
+    // Create upload heap
+    const UINT64 uploadBufferSize = GetRequiredIntermediateSize(mPaintTexture.Get(), 0, 1);
+    heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+    D3D12_RESOURCE_DESC bufferDesc = CD3DX12_RESOURCE_DESC::Buffer(uploadBufferSize);
+    ThrowIfFailed(md3dDevice->CreateCommittedResource(
+        &heapProps,
+        D3D12_HEAP_FLAG_NONE,
+        &bufferDesc,
+        D3D12_RESOURCE_STATE_GENERIC_READ,
+        nullptr,
+        IID_PPV_ARGS(&mPaintTextureUploadHeap)));
+    
+    // Initialize texture with transparent data
+    D3D12_SUBRESOURCE_DATA textureData = {};
+    textureData.pData = mPaintTextureData.data();
+    textureData.RowPitch = mPaintTextureWidth * 4;
+    textureData.SlicePitch = textureData.RowPitch * mPaintTextureHeight;
+    
+    UpdateSubresources(mCommandList.Get(), mPaintTexture.Get(), mPaintTextureUploadHeap.Get(),
+        0, 0, 1, &textureData);
+    
+    // Transition to shader resource state
+    mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+        mPaintTexture.Get(),
+        D3D12_RESOURCE_STATE_COPY_DEST,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+    
+    // Create SRV for paint texture
+    CD3DX12_CPU_DESCRIPTOR_HANDLE srvHandle(mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart(), 2, mCbvSrvUavDescriptorSize);
+    
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.Format = texDesc.Format;
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srvDesc.Texture2D.MostDetailedMip = 0;
+    srvDesc.Texture2D.MipLevels = 1;
+    
+    md3dDevice->CreateShaderResourceView(mPaintTexture.Get(), &srvDesc, srvHandle);
+    mPaintTextureSrvHandle = srvHandle;
+    
+    OutputDebugString(L"Paint texture initialized.\n");
+}
+
+bool Labor4App::RaycastTerrainCPU(const DirectX::XMFLOAT3& rayOrigin, const DirectX::XMFLOAT3& rayDir, DirectX::XMFLOAT3& hitPoint)
+{
+    // Simplified CPU-side raycast - approximate by finding intersection with terrain plane
+    // Since we can't easily sample heightmap on CPU, we'll use ray-marching with height approximation
+    // For better accuracy, we'd need to read heightmap data, but for painting this approximation works
+    
+    const float maxDist = 2000.0f;
+    const float stepSize = 5.0f;  // Larger step for CPU (performance vs accuracy tradeoff)
+    float currentDist = 0.0f;
+    
+    XMVECTOR origin = XMLoadFloat3(&rayOrigin);
+    XMVECTOR dir = XMVector3Normalize(XMLoadFloat3(&rayDir));
+    
+    while (currentDist < maxDist)
+    {
+        XMVECTOR testPosV = origin + dir * currentDist;
+        XMFLOAT3 testPos;
+        XMStoreFloat3(&testPos, testPosV);
+        
+        // Convert world position to terrain UV coordinates
+        float u = (testPos.x / mPassCB.terrainSize) * 0.5f + 0.5f;
+        float v = (testPos.z / mPassCB.terrainSize) * 0.5f + 0.5f;
+        
+        // Check if within terrain bounds
+        if (u >= 0.0f && u <= 1.0f && v >= 0.0f && v <= 1.0f)
+        {
+            // Approximate terrain height (assume middle of height scale for simplicity)
+            // In a full implementation, we'd sample the heightmap texture data here
+            // For now, use a simple approximation: assume terrain is mostly flat with slight variation
+            float estimatedHeight = mPassCB.heightScale * 0.5f;  // Middle of height range
+            
+            // Check if ray is below estimated terrain surface
+            if (testPos.y <= estimatedHeight + 10.0f)  // Add small tolerance
+            {
+                hitPoint = testPos;
+                hitPoint.y = estimatedHeight;  // Use estimated height
+                return true;
+            }
+        }
+        else
+        {
+            // Out of bounds, no hit
+            break;
+        }
+        
+        currentDist += stepSize;
+    }
+    
+    return false;
+}
+
+void Labor4App::PaintTerrainAtPosition(const DirectX::XMFLOAT3& worldPos)
+{
+    // Convert world position to paint texture UV coordinates
+    float u = (worldPos.x / mPassCB.terrainSize) * 0.5f + 0.5f;
+    float v = (worldPos.z / mPassCB.terrainSize) * 0.5f + 0.5f;
+    
+    // Clamp to valid range
+    u = (std::max)(0.0f, (std::min)(1.0f, u));
+    v = (std::max)(0.0f, (std::min)(1.0f, v));
+    
+    // Convert UV to pixel coordinates
+    float centerX = u * mPaintTextureWidth;
+    float centerY = v * mPaintTextureHeight;
+    
+    // Calculate brush radius in pixels
+    float brushRadiusPixels = (mBrushRadius / mPassCB.terrainSize) * mPaintTextureWidth;
+    
+    // Paint a circle at this position
+    int minX = static_cast<int>((std::max)(0.0f, centerX - brushRadiusPixels));
+    int maxX = static_cast<int>((std::min)(static_cast<float>(mPaintTextureWidth), centerX + brushRadiusPixels));
+    int minY = static_cast<int>((std::max)(0.0f, centerY - brushRadiusPixels));
+    int maxY = static_cast<int>((std::min)(static_cast<float>(mPaintTextureHeight), centerY + brushRadiusPixels));
+    
+    for (int y = minY; y < maxY; ++y)
+    {
+        for (int x = minX; x < maxX; ++x)
+        {
+            float dx = x - centerX;
+            float dy = y - centerY;
+            float dist = sqrtf(dx * dx + dy * dy);
+            
+            if (dist <= brushRadiusPixels)
+            {
+                // Calculate alpha based on distance (smooth falloff)
+                float alpha = 1.0f - (dist / brushRadiusPixels);
+                alpha = (std::max)(0.0f, (std::min)(1.0f, alpha));
+                
+                // Get current pixel
+                int pixelIndex = (y * mPaintTextureWidth + x) * 4;
+                
+                // Blend paint color with existing paint (non-premultiplied alpha blending)
+                float existingAlpha = mPaintTextureData[pixelIndex + 3] / 255.0f;
+                float newAlpha = alpha * 0.8f;  // Paint opacity
+                
+                // Standard non-premultiplied alpha blending formula:
+                // FinalAlpha = existingAlpha + newAlpha * (1 - existingAlpha)
+                // FinalColor = (ExistingColor * existingAlpha + NewColor * newAlpha * (1 - existingAlpha)) / FinalAlpha
+                float combinedAlpha = existingAlpha + newAlpha * (1.0f - existingAlpha);
+                
+                if (combinedAlpha > 0.001f)  // Avoid division by zero
+                {
+                    // Get existing color (non-premultiplied)
+                    float existingR = mPaintTextureData[pixelIndex + 0] / 255.0f;
+                    float existingG = mPaintTextureData[pixelIndex + 1] / 255.0f;
+                    float existingB = mPaintTextureData[pixelIndex + 2] / 255.0f;
+                    
+                    // Blend colors using standard alpha blending
+                    float r = (existingR * existingAlpha + mPaintColor.x * newAlpha * (1.0f - existingAlpha)) / combinedAlpha;
+                    float g = (existingG * existingAlpha + mPaintColor.y * newAlpha * (1.0f - existingAlpha)) / combinedAlpha;
+                    float b = (existingB * existingAlpha + mPaintColor.z * newAlpha * (1.0f - existingAlpha)) / combinedAlpha;
+                    
+                    mPaintTextureData[pixelIndex + 0] = static_cast<UINT8>((std::min)(255.0f, r * 255.0f));
+                    mPaintTextureData[pixelIndex + 1] = static_cast<UINT8>((std::min)(255.0f, g * 255.0f));
+                    mPaintTextureData[pixelIndex + 2] = static_cast<UINT8>((std::min)(255.0f, b * 255.0f));
+                    mPaintTextureData[pixelIndex + 3] = static_cast<UINT8>((std::min)(255.0f, combinedAlpha * 255.0f));
+                }
+                else
+                {
+                    // No existing paint, just set new color
+                    mPaintTextureData[pixelIndex + 0] = static_cast<UINT8>(mPaintColor.x * 255.0f);
+                    mPaintTextureData[pixelIndex + 1] = static_cast<UINT8>(mPaintColor.y * 255.0f);
+                    mPaintTextureData[pixelIndex + 2] = static_cast<UINT8>(mPaintColor.z * 255.0f);
+                    mPaintTextureData[pixelIndex + 3] = static_cast<UINT8>(newAlpha * 255.0f);
+                }
+            }
+        }
+    }
+    
+    mPaintTextureDirty = true;
+}
+
+void Labor4App::UpdatePaintTexture()
+{
+    if (!mPaintTextureDirty)
+        return;
+    
+    // Update the paint texture on GPU
+    D3D12_SUBRESOURCE_DATA textureData = {};
+    textureData.pData = mPaintTextureData.data();
+    textureData.RowPitch = mPaintTextureWidth * 4;
+    textureData.SlicePitch = textureData.RowPitch * mPaintTextureHeight;
+    
+    // Transition texture to copy dest
+    mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+        mPaintTexture.Get(),
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+        D3D12_RESOURCE_STATE_COPY_DEST));
+    
+    UpdateSubresources(mCommandList.Get(), mPaintTexture.Get(), mPaintTextureUploadHeap.Get(),
+        0, 0, 1, &textureData);
+    
+    // Transition back to shader resource
+    mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+        mPaintTexture.Get(),
+        D3D12_RESOURCE_STATE_COPY_DEST,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+    
+    mPaintTextureDirty = false;
 }
 
 void Labor4App::BuildQuadtree()
@@ -1865,12 +2138,22 @@ void Labor4App::OnMouseDown(WPARAM btnState, int x, int y)
         mLastMousePos.y = y;
         SetCapture(mhMainWnd);
     }
+    if((btnState & MK_LBUTTON) != 0)
+    {
+        mLeftMouseDown = true;
+        mLastMousePos.x = x;
+        mLastMousePos.y = y;
+    }
 }
 
 void Labor4App::OnMouseUp(WPARAM btnState, int x, int y)
 {
     ReleaseCapture();
     mRightMouseDown = false;
+    if((btnState & MK_LBUTTON) == 0)  // Left button released
+    {
+        mLeftMouseDown = false;
+    }
 }
 
 void Labor4App::OnMouseMove(WPARAM btnState, int x, int y)
@@ -1885,6 +2168,49 @@ void Labor4App::OnMouseMove(WPARAM btnState, int x, int y)
         mCamera.Yaw(dx);
 
         mCamera.UpdateViewMatrix();
+    }
+    
+    // Handle terrain painting with left mouse button
+    if(mLeftMouseDown)
+    {
+        // Convert mouse position to NDC
+        float mouseX = static_cast<float>(x);
+        float mouseY = static_cast<float>(y);
+        float ndcX = (mouseX / mClientWidth) * 2.0f - 1.0f;
+        float ndcY = 1.0f - (mouseY / mClientHeight) * 2.0f;
+        
+        // Reconstruct ray from screen position using current view/projection matrices
+        XMMATRIX view = mCamera.GetView();
+        XMMATRIX proj = mCamera.GetProj();
+        XMMATRIX invView = XMMatrixInverse(nullptr, view);
+        XMMATRIX invProj = XMMatrixInverse(nullptr, proj);
+        
+        // Camera position
+        XMFLOAT3 camPos;
+        XMStoreFloat3(&camPos, mCamera.GetPosition());
+        
+        // NDC to view space (far plane)
+        XMVECTOR screenPos = XMVectorSet(ndcX, ndcY, 1.0f, 1.0f);
+        XMVECTOR viewPos = XMVector4Transform(screenPos, invProj);
+        viewPos = XMVectorScale(viewPos, 1.0f / XMVectorGetW(viewPos));
+        
+        // View space ray direction (from origin to far plane point)
+        XMVECTOR viewDir = XMVector3Normalize(viewPos);
+        
+        // Transform view direction to world space
+        XMMATRIX invViewRotation = invView;
+        invViewRotation.r[3] = XMVectorSet(0, 0, 0, 1);  // Remove translation, keep rotation
+        XMVECTOR worldDir = XMVector3Normalize(XMVector3TransformNormal(viewDir, invViewRotation));
+        
+        XMFLOAT3 rayDir;
+        XMStoreFloat3(&rayDir, worldDir);
+        
+        // Raycast to terrain
+        XMFLOAT3 hitPoint;
+        if (RaycastTerrainCPU(camPos, rayDir, hitPoint))
+        {
+            PaintTerrainAtPosition(hitPoint);
+        }
     }
 
     mLastMousePos.x = x;

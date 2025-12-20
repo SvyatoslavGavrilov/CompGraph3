@@ -20,6 +20,15 @@ cbuffer cbPass : register(b1)
     float tileSize;
     float3 cameraPosition;
     float padding;
+    
+    // Mouse input for terrain drawing
+    float2 mouseScreenPos;  // Mouse position in normalized screen coordinates (NDC: [-1,1])
+    int mouseButtonPressed;  // 1 if mouse button is pressed, 0 otherwise
+    float paddingMouse[1];
+    
+    // View and projection matrices for ray tracing
+    float4x4 View;
+    float4x4 Proj;
 };
 
 // Tessellation parameters
@@ -55,6 +64,7 @@ cbuffer cbAtmosphere : register(b3)
 // Textures
 Texture2D heightmapTexture : register(t0);
 Texture2D terrainTexture : register(t1);
+Texture2D paintTexture : register(t2);  // Persistent paint overlay texture
 SamplerState gSampler : register(s0);
 
 // Vertex shader input/output for patches
@@ -440,6 +450,94 @@ float CalculateExponentialHeightFog(float3 rayOrigin, float3 rayDirection, float
     return expFogFactor;
 }
 
+// Ray-terrain intersection function
+// Traces a ray from camera through mouse screen position and finds intersection with terrain
+float3 RayTraceTerrain(float3 rayOrigin, float3 rayDir)
+{
+    // Ray march through terrain heightmap
+    // Start from camera position and step along ray
+    float3 hitPos = float3(0, -999999.0f, 0);  // Use invalid Y to indicate no hit
+    bool hit = false;
+    
+    // Maximum ray distance
+    float maxDist = 2000.0f;
+    float stepSize = 2.0f;  // Smaller step size for better accuracy
+    float currentDist = 0.0f;
+    
+    while (currentDist < maxDist && !hit)
+    {
+        float3 testPos = rayOrigin + rayDir * currentDist;
+        
+        // Convert world position to texture coordinates
+        float2 uv = float2(testPos.x, testPos.z) / terrainSize;
+        uv = uv * 0.5f + 0.5f;  // Convert from [-0.5, 0.5] to [0, 1]
+        
+        // Check if within terrain bounds
+        if (uv.x >= 0.0f && uv.x <= 1.0f && uv.y >= 0.0f && uv.y <= 1.0f)
+        {
+            // Sample height at this position
+            float heightValue = heightmapTexture.SampleLevel(gSampler, uv, 0).r;
+            float terrainHeight = heightValue * heightScale;
+            
+            // Check if ray is below terrain surface
+            if (testPos.y <= terrainHeight)
+            {
+                hit = true;
+                hitPos = float3(testPos.x, terrainHeight, testPos.z);
+                break;
+            }
+        }
+        
+        currentDist += stepSize;
+    }
+    
+    return hitPos;
+}
+
+// Reconstruct ray direction from screen position
+// Uses view and projection matrices to convert screen NDC to world space ray
+float3 ReconstructRayFromScreenPos(float2 screenPosNDC)
+{
+    // Simplified ray reconstruction for perspective projection
+    // In view space, camera is at origin looking down -Z axis
+    // Screen NDC maps to a direction in view space
+    
+    // Extract projection parameters (matrices are transposed, so Proj[i][j] is row i, col j)
+    // For D3D perspective projection matrix:
+    // Proj[0][0] = 1/(tan(fov/2) * aspect)
+    // Proj[1][1] = 1/tan(fov/2)
+    // So: tan(fov/2) = 1/Proj[1][1]
+    //     aspect = Proj[1][1] / Proj[0][0]
+    float tanHalfFov = 1.0 / Proj[1][1];
+    float aspect = Proj[1][1] / Proj[0][0];
+    
+    // Construct view space ray direction
+    // Screen center (0,0) maps to (0,0,-1), screen edges map proportionally
+    float3 viewRay = float3(
+        screenPosNDC.x * tanHalfFov * aspect,
+        screenPosNDC.y * tanHalfFov,
+        -1.0f  // Looking down -Z in view space
+    );
+    viewRay = normalize(viewRay);
+    
+    // Transform view direction to world space
+    // View matrix transforms world->view, so to transform view->world we need inverse
+    // The rotation part (first 3x3) of View, when transposed, gives view->world rotation
+    // In HLSL, View[i] is row i (or column i depending on how it was stored)
+    // Since matrices are transposed when stored, View[0].xyz is the first column
+    // which represents the world X axis in view space
+    float3x3 viewToWorld = float3x3(
+        View[0].xyz,  // World X axis in view space
+        View[1].xyz,  // World Y axis in view space  
+        View[2].xyz   // World Z axis in view space
+    );
+    // Transpose to convert from world-in-view-space to view-to-world rotation
+    viewToWorld = transpose(viewToWorld);
+    float3 worldDir = mul(viewRay, viewToWorld);
+    
+    return normalize(worldDir);
+}
+
 // [[Terrain-shader-pipeline]] Pixel Shader - Final stage in the pipeline
 // This function runs ONCE per pixel (fragment)
 // Purpose: Determine the final color that will be written to the render target
@@ -447,7 +545,8 @@ float CalculateExponentialHeightFog(float3 rayOrigin, float3 rayDirection, float
 // What happens:
 // 1. Sample terrain texture using interpolated UV coordinates
 // 2. Apply simple height-based lighting (depth cue)
-// 3. Return final color
+// 3. Check if mouse ray hits this pixel and draw pink if button pressed
+// 4. Return final color
 //
 // The pixel shader receives interpolated values from the domain shader:
 // - Position in world space (for lighting)
@@ -516,6 +615,20 @@ float4 PS(DomainOut pin) : SV_Target
     
     // Blend fog with terrain color: FinalColor = TerrainColor * FogTransmittance + FogInscattering
     texColor.rgb = texColor.rgb * fogFactor + fogInscattering;
+    
+    // [[Persistent-Paint-Overlay]] Sample paint texture and blend after lighting
+    // This ensures paint preserves the lighting that was applied to the base terrain
+    float4 paintColor = paintTexture.Sample(gSampler, pin.TexCoord);
+    
+    // Blend paint over terrain color using alpha blending
+    // Paint is applied as an overlay that preserves the underlying lighting
+    if (paintColor.a > 0.0)
+    {
+        // Use overlay blend mode: preserves highlights and shadows of base terrain
+        // Paint color modulates the terrain color while preserving lighting
+        float3 paintOverlay = lerp(texColor.rgb, texColor.rgb * paintColor.rgb, paintColor.a * 0.7);
+        texColor.rgb = lerp(texColor.rgb, paintOverlay, paintColor.a);
+    }
     
     return texColor;
 }

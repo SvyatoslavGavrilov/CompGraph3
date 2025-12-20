@@ -26,6 +26,15 @@ struct PassConstants
     // Camera position for LOD calculations
     DirectX::XMFLOAT3 cameraPosition = { 0.0f, 0.0f, 0.0f };
     float padding = 0.0f;  // Padding for alignment
+    
+    // Mouse input for terrain drawing
+    DirectX::XMFLOAT2 mouseScreenPos = { 0.0f, 0.0f };  // Mouse position in normalized screen coordinates (NDC: [-1,1])
+    int mouseButtonPressed = 0;  // 1 if mouse button is pressed, 0 otherwise
+    float padding2[1];  // Padding for alignment
+    
+    // View and projection matrices for ray tracing (inverse matrices)
+    DirectX::XMFLOAT4X4 View = MathHelper::Identity4x4();
+    DirectX::XMFLOAT4X4 Proj = MathHelper::Identity4x4();
 };
 
 // Simple vertex with position and color
