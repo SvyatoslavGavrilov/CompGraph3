@@ -9,9 +9,6 @@
 #include <array>
 #include <string>
 #include "BaselineFrameResource.h"
-#include "imgui_impl_dx12.h"
-#include "imgui_impl_win32.h"
-#include "imgui.h"
 
 using Microsoft::WRL::ComPtr;
 using namespace DirectX;
@@ -22,21 +19,21 @@ using namespace DirectX::PackedVector;
 
 const int gNumFrameResources = 3;
 
-// [[Quadtree-LOD-system]] Quadtree node structure for terrain LOD
+// Quadtree node structure for terrain LOD
 struct QuadtreeNode
 {
     // Bounding information
     DirectX::XMFLOAT3 center;           // Center of this node's terrain patch
     float halfSize;                     // Half the size of this node (in world units)
     
-    // [[LOD-selection-algorithm]] LOD information
+    // LOD information
     UINT level;                         // Level in quadtree (0 = root, higher = more detailed)
     float screenSpaceError;             // Calculated error for this LOD level
     
     // Child nodes
     std::unique_ptr<QuadtreeNode> children[4];  // NW, NE, SW, SE
     
-    // [[Terrain-tile-generation]] Terrain tile information
+    // Terrain tile information
     ComPtr<ID3D12Resource> vertexBuffer;
     ComPtr<ID3D12Resource> indexBuffer;
     ComPtr<ID3D12Resource> vertexBufferUpload;
@@ -46,20 +43,10 @@ struct QuadtreeNode
     UINT vertexCount;
     UINT indexCount;
     
-    // Skirt geometry to hide [[LOD-selection-algorithm]] LOD gaps
-    ComPtr<ID3D12Resource> skirtVertexBuffer;
-    ComPtr<ID3D12Resource> skirtIndexBuffer;
-    ComPtr<ID3D12Resource> skirtVertexBufferUpload;
-    ComPtr<ID3D12Resource> skirtIndexBufferUpload;
-    D3D12_VERTEX_BUFFER_VIEW skirtVertexBufferView;
-    D3D12_INDEX_BUFFER_VIEW skirtIndexBufferView;
-    UINT skirtVertexCount;
-    UINT skirtIndexCount;
-    
     // Rendering state
-    bool isVisible = false;             // Set during [[Frustum-culling-module]] frustum culling
+    bool isVisible = false;             // Set during frustum culling
     bool needsUpdate = true;           // Set when geometry needs regeneration
-    bool shouldRender = false;         // Set when this node should be rendered ([[LOD-selection-algorithm]] LOD selected)
+    bool shouldRender = false;         // Set when this node should be rendered (LOD selected)
     
     // Constructor
     QuadtreeNode(const DirectX::XMFLOAT3& centerPos, float size, UINT lvl)
@@ -152,18 +139,17 @@ private:
     bool LoadTerrainTexture(const std::wstring& texturePath);
     void CreateSrvDescriptorHeap();
     
-    // [[Terrain-rendering-pipeline]] Terrain rendering
+    // Terrain rendering
     void RenderQuadtreeNodes(ID3D12GraphicsCommandList* cmdList, QuadtreeNode* node);
     
-    // [[Quadtree-LOD-system]] Quadtree methods
+    // Quadtree methods
     void BuildQuadtree();
     UINT CalculateMaxLODLevels();
     void BuildQuadtreeRecursive(QuadtreeNode* node, UINT maxLevels);
     void CreateTerrainTile(QuadtreeNode* node);
-    void CreateSkirtGeometry(QuadtreeNode* node, UINT verticesPerSide, float tileWorldSize);
     void CalculateScreenSpaceError(QuadtreeNode* node);
     
-    // [[LOD-selection-algorithm]] LOD and [[Frustum-culling-module]] culling
+    // LOD and culling
     void SelectLODLevels();
     void SelectLODRecursive(QuadtreeNode* node, bool parentVisible);
     bool IsNodeVisible(const QuadtreeNode* node) const;
@@ -207,28 +193,15 @@ private:
     UINT mHeightmapWidth = 0;
     UINT mHeightmapHeight = 0;
     
-    // [[Quadtree-LOD-system]] Quadtree terrain system
+    // Quadtree terrain system
     std::unique_ptr<QuadtreeNode> mQuadtreeRoot;
     DirectX::XMFLOAT3 mTerrainCenter = { 0.0f, 0.0f, 0.0f };
     float mTerrainHalfSize = 50.0f;  // Half of total terrain size (100x100 total)
     
-    // [[Frustum-culling-module]] Frustum culling
+    // Frustum culling
     DirectX::BoundingFrustum mCameraFrustum;
     XMMATRIX mViewMatrix;
     XMMATRIX mProjectionMatrix;
-    bool mFrustumCullingEnabled = true;  // Enable/disable [[Frustum-culling-module]] frustum culling
-    bool mFrustumNeedsUpdate = true;     // Flag to update frustum only on 'C' key press
-    
-    // Tessellation constants
-    struct TessellationConstants
-    {
-        float minTessellationFactor = 1.0f;
-        float maxTessellationFactor = 64.0f;
-        float tessellationDistance = 100.0f;
-        float padding = 0.0f;
-    };
-    TessellationConstants mTessellationConstants;
-    std::unique_ptr<UploadBuffer<TessellationConstants>> mTessellationCB = nullptr;
 };
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
@@ -262,11 +235,6 @@ BaselineApp::~BaselineApp()
 {
     if(md3dDevice != nullptr)
         FlushCommandQueue();
-    
-    // Cleanup IMGUI
-    ImGui_ImplDX12_Shutdown();
-    ImGui_ImplWin32_Shutdown();
-    ImGui::DestroyContext();
 }
 
 bool BaselineApp::Initialize()
@@ -284,11 +252,11 @@ bool BaselineApp::Initialize()
     BuildPSOs();
     BuildFrameResources();
     
-    // Create [[Terrain-shader-pipeline]] terrain shader and PSO
+    // Create terrain shader and PSO
     BuildTerrainShaders();
     BuildTerrainPSO();
     
-    // Create SRV descriptor heap for [[Texture-loading-system]] textures
+    // Create SRV descriptor heap for textures
     CreateSrvDescriptorHeap();
     
     // Load heightmap from terrain directory
@@ -303,12 +271,8 @@ bool BaselineApp::Initialize()
         OutputDebugString(L"Failed to load terrain texture.\n");
     }
     
-    // Build [[Quadtree-LOD-system]] quadtree after heightmap is loaded
+    // Build quadtree after heightmap is loaded
     BuildQuadtree();
-    
-    // Create tessellation constant buffer
-    mTessellationCB = std::make_unique<UploadBuffer<TessellationConstants>>(md3dDevice.Get(), 1, true);
-    mTessellationCB->CopyData(0, mTessellationConstants);
 
     // Initialize camera
     mCamera.SetPosition(0.0f, 2.0f, -5.0f);
@@ -319,33 +283,11 @@ bool BaselineApp::Initialize()
     mCamera.UpdateViewMatrix();
     
     // Initialize pass constant buffer with default terrain values
-    mPassCB.heightScale = 1.0f;  // Default displacement strength (slider range: 0-10)
+    mPassCB.heightScale = 10.0f;  // Reduced by 10x
     mPassCB.terrainSize = 100.0f;  // Reduced by 10x (was 1000.0f)
     mPassCB.heightmapWidth = 256;  // Will be updated when heightmap is loaded
     mPassCB.heightmapHeight = 256;
     mPassCB.tileSize = 3.2f;  // Reduced by 10x
-    mPassCB.terrainYOffset = 0.0f;  // Initialize terrain Y offset
-
-    // Initialize IMGUI
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGui::StyleColorsDark();
-    
-    ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
-
-    ImGui_ImplDX12_InitInfo init_info = {};
-    init_info.Device = md3dDevice.Get();
-    init_info.CommandQueue = mCommandQueue.Get();
-    init_info.NumFramesInFlight = gNumFrameResources;
-    init_info.RTVFormat = mBackBufferFormat;
-    init_info.DSVFormat = mDepthStencilFormat;
-    init_info.SrvDescriptorHeap = mSrvDescriptorHeap.Get();
-    init_info.LegacySingleSrvCpuDescriptor = mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
-    init_info.LegacySingleSrvGpuDescriptor = mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart();
-    ImGui_ImplWin32_Init(mhMainWnd);
-    ImGui_ImplDX12_Init(&init_info);
 
     // Execute the initialization commands.
     ThrowIfFailed(mCommandList->Close());
@@ -372,77 +314,37 @@ void BaselineApp::OnResize()
 
 void BaselineApp::Update(const GameTimer& gt)
 {
-    // [[Rendering-pipeline]] Update function: Called every frame before rendering
-    // This function prepares all data needed for the current frame:
-    // 1. Updates camera position/orientation
-    // 2. Updates frustum for culling
-    // 3. Updates constant buffers
-    // 4. Manages frame resource synchronization
-    
-    // Rotate the cube (reference object, not terrain-related)
+    // Rotate the cube
     mCubeRotation += 1.0f * gt.DeltaTime();
     if(mCubeRotation > XM_2PI)
         mCubeRotation -= XM_2PI;
 
-    // [[Rendering-pipeline]] STEP 1: Update camera movement based on keyboard input
-    // WASD keys control camera movement in world space
-    // This allows the user to explore the terrain
+    // Update camera movement
     const float dt = gt.DeltaTime();
     const float moveSpeed = 20.0f;  // Increased from 5.0f for faster movement
     
     if(GetAsyncKeyState('W') & 0x8000)
-        mCamera.Walk(moveSpeed * dt);   // Move forward along look vector
+        mCamera.Walk(moveSpeed * dt);
     if(GetAsyncKeyState('S') & 0x8000)
-        mCamera.Walk(-moveSpeed * dt);  // Move backward
+        mCamera.Walk(-moveSpeed * dt);
     if(GetAsyncKeyState('A') & 0x8000)
-        mCamera.Strafe(-moveSpeed * dt); // Strafe left (perpendicular to look vector)
+        mCamera.Strafe(-moveSpeed * dt);
     if(GetAsyncKeyState('D') & 0x8000)
-        mCamera.Strafe(moveSpeed * dt);  // Strafe right
+        mCamera.Strafe(moveSpeed * dt);
 
-    // [[Rendering-pipeline]] STEP 2: Recalculate view matrix after camera movement
-    // The view matrix transforms world coordinates to view space (camera-relative)
-    // Must be updated whenever camera position or orientation changes
     mCamera.UpdateViewMatrix();
     
-    // [[LOD-selection-algorithm]] STEP 3: Update camera position in constant buffer
-    // This position is used by:
-    // - CPU-side LOD selection: Calculate distance from camera to terrain nodes
-    // - GPU-side tessellation: Calculate distance from camera to patches (in ConstantHS)
-    // The constant buffer is updated once per frame and shared by all terrain patches
+    // Update camera position in constant buffer (for LOD calculations)
     XMVECTOR camPos = mCamera.GetPosition();
     XMStoreFloat3(&mPassCB.cameraPosition, camPos);
     
-    // [[Frustum-culling-module]] STEP 4: Update view and projection matrices
-    // These matrices are needed to construct the frustum for visibility testing
-    // View matrix: transforms world to view space
-    // Projection matrix: defines the shape of the view frustum (FOV, aspect, near/far planes)
+    // Update view and projection matrices for frustum culling
     mViewMatrix = mCamera.GetView();
     mProjectionMatrix = mCamera.GetProj();
     
-    // [[Frustum-culling-module]] STEP 5: Update frustum when flag is set
-    // The frustum is only updated when mFrustumNeedsUpdate is true
-    // This flag is set when 'C' key is pressed (for testing) or could be set every frame
-    // Lazy updates save CPU time if camera doesn't move
-    if (mFrustumNeedsUpdate)
-    {
-        // [[Frustum-culling-module]] STEP 5a: Create frustum from projection matrix
-        // The projection matrix encodes the frustum shape (FOV, aspect ratio, near/far planes)
-        // CreateFromMatrix extracts this information and creates a BoundingFrustum object
-        // The frustum is initially in VIEW SPACE (relative to camera at origin)
-        DirectX::BoundingFrustum::CreateFromMatrix(mCameraFrustum, mProjectionMatrix);
-        
-        // [[Frustum-culling-module]] STEP 5b: Transform frustum to world space
-        // The frustum is in view space, but terrain nodes are in world space
-        // We need to transform the frustum to world space for comparison
-        // The inverse view matrix transforms from view space to world space
-        // This accounts for camera position and orientation
-        XMMATRIX inverseView = XMMatrixInverse(nullptr, mViewMatrix);
-        mCameraFrustum.Transform(mCameraFrustum, inverseView);
-        
-        // [[Frustum-culling-module]] Reset flag after update
-        // Prevents unnecessary updates until flag is set again
-        mFrustumNeedsUpdate = false;
-    }
+    // Create frustum from matrices
+    DirectX::BoundingFrustum::CreateFromMatrix(mCameraFrustum, mProjectionMatrix);
+    mCameraFrustum.Transform(mCameraFrustum, XMMatrixInverse(nullptr, mViewMatrix));
 
     mCurrFrameResourceIndex = (mCurrFrameResourceIndex + 1) % gNumFrameResources;
     mCurrFrameResource = mFrameResources[mCurrFrameResourceIndex].get();
@@ -456,192 +358,65 @@ void BaselineApp::Update(const GameTimer& gt)
     }
 
     UpdateObjectCBs(gt);
-    
-    // IMGUI frame setup - must be before UpdatePassCB so slider changes take effect immediately
-    ImGui_ImplDX12_NewFrame();
-    ImGui_ImplWin32_NewFrame();
-    ImGui::NewFrame();
-    
-    // Create IMGUI window with terrain controls
-    ImGui::Begin("Terrain Controls");
-    
-    // Slider for displacement strength (heightScale)
-    // This controls how much the heightmap affects terrain elevation
-    
-    
-    // Slider for terrain Y position (height in world)
-    // This moves the entire terrain up or down in world space
-    ImGui::SliderFloat("Terrain Y Position", &mPassCB.terrainYOffset, -100.0f, 100.0f);
-    
-    ImGui::End();
-    
-    // Update pass constant buffer AFTER IMGUI so slider changes are immediately reflected
     UpdatePassCB(gt);
 }
 
 void BaselineApp::Draw(const GameTimer& gt)
 {
-    // [[Rendering-pipeline]] Draw function: Records all rendering commands for the current frame
-    // This function orchestrates the entire rendering process:
-    // 1. Sets up render targets and viewports
-    // 2. Binds resources (constant buffers, textures, samplers)
-    // 3. Performs LOD selection and frustum culling
-    // 4. Issues draw calls for terrain patches
-    // 5. Presents the final image to screen
-    
-    // [[Rendering-pipeline]] STEP 1: Get command allocator for current frame
-    // Each frame has its own command allocator to prevent CPU-GPU synchronization issues
-    // Triple buffering (3 frame resources) allows CPU to work 2 frames ahead
     auto cmdListAlloc = mCurrFrameResource->CmdListAlloc;
 
-    // [[Rendering-pipeline]] STEP 2: Reset command allocator and command list
-    // Reset allocator: Makes memory available for new commands (reuses existing memory)
-    // Reset command list: Prepares for recording new commands, binds initial PSO
-    // The initial PSO ("opaque") is for non-terrain objects, terrain PSO is set later
     ThrowIfFailed(cmdListAlloc->Reset());
     ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque"].Get()));
 
-    // [[Rendering-pipeline]] STEP 3: Set viewport and scissor rect
-    // Viewport: Defines the rendering area on the render target (full screen typically)
-    // Scissor rect: Clips rendering to a specific rectangle (can be used for optimization)
-    // These are set once per frame and apply to all subsequent draw calls
     mCommandList->RSSetViewports(1, &mScreenViewport);
     mCommandList->RSSetScissorRects(1, &mScissorRect);
 
-    // [[Rendering-pipeline]] STEP 4: Transition back buffer to render target state
-    // Back buffer starts in PRESENT state (ready for display)
-    // Must transition to RENDER_TARGET state before we can render to it
-    // Resource barriers are required in DirectX 12 for state transitions
     mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
         D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
 
-    // [[Rendering-pipeline]] STEP 5: Clear render target and depth buffer
-    // Clear render target: Fills with background color (LightSteelBlue)
-    // Clear depth buffer: Sets all depth values to 1.0 (far plane = maximum depth)
-    // Clear stencil buffer: Sets all stencil values to 0
-    // Clearing ensures we start with a clean slate each frame
     mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::LightSteelBlue, 0, nullptr);
     mCommandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
 
-    // [[Rendering-pipeline]] STEP 6: Set render targets
-    // OMSetRenderTargets: Binds render target and depth/stencil buffer
-    // The GPU will render to these buffers for all subsequent draw calls
-    // First parameter: Number of render targets (1 = single render target)
-    // Second parameter: Pointer to render target view
-    // Third parameter: true = also bind depth/stencil buffer
-    // Fourth parameter: Pointer to depth/stencil view
     mCommandList->OMSetRenderTargets(1, &CurrentBackBufferView(), true, &DepthStencilView());
 
-    // [[Rendering-pipeline]] STEP 7: Set root signature
-    // Root signature defines how shaders access resources (constant buffers, textures, samplers)
-    // Must be set before setting any resources or drawing
-    // The root signature acts as a contract between CPU and GPU about resource layout
     mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
 
-    // [[Rendering-pipeline]] STEP 8: Set pass constant buffer (root parameter slot 1, register b1)
-    // Pass constants contain data shared by all terrain patches:
-    // - Camera position (for LOD and tessellation calculations)
-    // - Heightmap parameters (width, height, scale, terrain size)
-    // - Total time (for animations, if needed)
-    // These are updated once per frame in UpdatePassCB()
     auto passCB = mCurrFrameResource->PassCB->Resource();
     mCommandList->SetGraphicsRootConstantBufferView(1, passCB->GetGPUVirtualAddress());
     
-    // [[Rendering-pipeline]] STEP 9: Set descriptor heap for textures
-    // Descriptor heap contains shader resource views (SRVs) for textures
-    // Must be set before using textures in shaders
-    // Only one descriptor heap can be active at a time for each type (SRV/CBV/UAV)
+    // Set descriptor heap for textures
     ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
     mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
     
-    // [[Rendering-pipeline]] STEP 10: Set texture descriptor table (root parameter slot 3, registers t0, t1)
-    // This binds the heightmap texture (t0) and terrain texture (t1) to the shader
-    // The descriptor table points to the start of the SRV heap
-    // Shaders can access textures using register indices (t0, t1)
+    // Set texture descriptor table
     CD3DX12_GPU_DESCRIPTOR_HANDLE texHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
-    mCommandList->SetGraphicsRootDescriptorTable(3, texHandle);
-    
-    // [[Rendering-pipeline]] STEP 11: Set tessellation constant buffer (root parameter slot 2, register b2)
-    // Tessellation constants: min/max tessellation factors, tessellation distance
-    // These control how much detail the GPU tessellation adds to terrain patches
-    // Updated rarely (only when tessellation settings change)
-    auto tessCB = mTessellationCB->Resource();
-    mCommandList->SetGraphicsRootConstantBufferView(2, tessCB->GetGPUVirtualAddress());
+    mCommandList->SetGraphicsRootDescriptorTable(2, texHandle);
 
-    // [[LOD-selection-algorithm]] [[Frustum-culling-module]] STEP 12: Perform LOD selection and frustum culling
-    // This is the critical optimization step that determines which terrain nodes to render
-    // SelectLODLevels() does the following:
-    // 1. Resets all render flags (shouldRender, isVisible)
-    // 2. Traverses the quadtree recursively
-    // 3. For each node:
-    //    a. Tests visibility against frustum (IsNodeVisible)
-    //    b. Calculates distance from camera
-    //    c. Determines if node should render or subdivide (LOD selection)
-    // 4. Marks nodes for rendering (shouldRender = true)
+    // Perform LOD selection and frustum culling
     if (mQuadtreeRoot)
     {
-        SelectLODLevels();  // [[LOD-selection-algorithm]] Traverse quadtree, select LOD, perform culling
+        SelectLODLevels();
         
-        // [[Terrain-rendering-pipeline]] STEP 13: Set terrain pipeline state
-        // This activates the terrain shader pipeline:
-        // - Vertex Shader (VS): Processes control points
-        // - Hull Shader (HS): Calculates tessellation factors
-        // - Domain Shader (DS): Evaluates final vertex positions, samples heightmap
-        // - Pixel Shader (PS): Applies terrain texture and lighting
-        // The PSO was created in BuildTerrainPSO() with patch topology
+        // Render terrain using quadtree
         mCommandList->SetPipelineState(mPSOs["terrain"].Get());
-        
-        // [[Terrain-rendering-pipeline]] STEP 14: Render terrain patches
-        // This recursively traverses the quadtree and issues draw calls for visible nodes
-        // RenderQuadtreeNodes() does the following:
-        // 1. Checks if node is visible (from frustum culling)
-        // 2. If node should render (from LOD selection):
-        //    a. Binds vertex and index buffers
-        //    b. Sets patch topology
-        //    c. Updates object constant buffer (world matrix, view-projection)
-        //    d. Issues draw call for patches
-        // 3. If node should not render, recursively processes children
         RenderQuadtreeNodes(mCommandList.Get(), mQuadtreeRoot.get());
     }
     
-    // [[Rendering-pipeline]] STEP 15: Render other objects (cube, etc.)
-    // Switch to opaque PSO for non-terrain objects
+    // Render cube (for reference)
     mCommandList->SetPipelineState(mPSOs["opaque"].Get());
     DrawRenderItems(mCommandList.Get());
 
-    // [[Rendering-pipeline]] STEP 15a: Render IMGUI
-    ImGui::Render();
-    ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), mCommandList.Get());
-
-    // [[Rendering-pipeline]] STEP 16: Transition back buffer to present state
-    // Back buffer must be in PRESENT state before presenting to screen
-    // This is required by the swap chain
     mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
         D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT));
 
-    // [[Rendering-pipeline]] STEP 17: Close command list
-    // Command list must be closed before execution
-    // Closing finalizes the command list and makes it ready for GPU execution
     ThrowIfFailed(mCommandList->Close());
 
-    // [[Rendering-pipeline]] STEP 18: Execute command list
-    // Submit the command list to the GPU for execution
-    // The GPU will process all commands asynchronously
-    // The CPU can continue working while GPU processes commands
     ID3D12CommandList* cmdsLists[] = { mCommandList.Get() };
     mCommandQueue->ExecuteCommandLists(_countof(cmdsLists), cmdsLists);
 
-    // [[Rendering-pipeline]] STEP 19: Present to screen
-    // Swap the back buffer to the front buffer for display
-    // This makes the rendered frame visible on screen
-    // Present(0, 0) means: sync interval 0 (no VSync), flags 0
     ThrowIfFailed(mSwapChain->Present(0, 0));
     mCurrBackBuffer = (mCurrBackBuffer + 1) % SwapChainBufferCount;
 
-    // [[Rendering-pipeline]] STEP 20: Signal fence
-    // Mark this frame resource as in use by setting fence value
-    // This allows the CPU to track when the GPU finishes processing this frame
-    // The fence is checked in Update() to prevent overwriting data the GPU is still using
     mCurrFrameResource->Fence = ++mCurrentFence;
     mCommandQueue->Signal(mFence.Get(), mCurrentFence);
 }
@@ -652,12 +427,11 @@ void BaselineApp::BuildRootSignature()
     CD3DX12_DESCRIPTOR_RANGE texTable;
     texTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0);  // 2 textures: heightmap + terrain texture
 
-    CD3DX12_ROOT_PARAMETER slotRootParameter[4];
+    CD3DX12_ROOT_PARAMETER slotRootParameter[3];
 
     slotRootParameter[0].InitAsConstantBufferView(0); // Object constants (b0)
     slotRootParameter[1].InitAsConstantBufferView(1); // Pass constants (b1)
-    slotRootParameter[2].InitAsConstantBufferView(2); // Tessellation constants (b2)
-    slotRootParameter[3].InitAsDescriptorTable(1, &texTable, D3D12_SHADER_VISIBILITY_ALL); // Textures (t0, t1) - used in both VS and PS
+    slotRootParameter[2].InitAsDescriptorTable(1, &texTable, D3D12_SHADER_VISIBILITY_ALL); // Textures (t0, t1) - used in both VS and PS
 
     // Static sampler for texture sampling
     CD3DX12_STATIC_SAMPLER_DESC samplerDesc(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
@@ -665,7 +439,7 @@ void BaselineApp::BuildRootSignature()
     samplerDesc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
     samplerDesc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
 
-    CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(4, slotRootParameter,
+    CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(3, slotRootParameter,
         1, &samplerDesc,
         D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
@@ -702,8 +476,6 @@ void BaselineApp::BuildShadersAndInputLayout()
 void BaselineApp::BuildTerrainShaders()
 {
     mShaders["terrainVS"] = d3dUtil::CompileShader(L"Shaders\\Terrain.hlsl", nullptr, "VS", "vs_5_1");
-    mShaders["terrainHS"] = d3dUtil::CompileShader(L"Shaders\\Terrain.hlsl", nullptr, "HS", "hs_5_1");
-    mShaders["terrainDS"] = d3dUtil::CompileShader(L"Shaders\\Terrain.hlsl", nullptr, "DS", "ds_5_1");
     mShaders["terrainPS"] = d3dUtil::CompileShader(L"Shaders\\Terrain.hlsl", nullptr, "PS", "ps_5_1");
 }
 
@@ -809,20 +581,10 @@ void BaselineApp::BuildTerrainPSO()
     ZeroMemory(&psoDesc, sizeof(D3D12_GRAPHICS_PIPELINE_STATE_DESC));
     psoDesc.InputLayout = { terrainInputLayout.data(), (UINT)terrainInputLayout.size() };
     psoDesc.pRootSignature = mRootSignature.Get();
-    psoDesc.VS = ImGui::SliderFloat("Displacement Strength", &mPassCB.heightScale, 0.0f, 10.0f);
+    psoDesc.VS = 
     { 
         reinterpret_cast<BYTE*>(mShaders["terrainVS"]->GetBufferPointer()), 
         mShaders["terrainVS"]->GetBufferSize()
-    };
-    psoDesc.HS = 
-    { 
-        reinterpret_cast<BYTE*>(mShaders["terrainHS"]->GetBufferPointer()),
-        mShaders["terrainHS"]->GetBufferSize()
-    };
-    psoDesc.DS = 
-    { 
-        reinterpret_cast<BYTE*>(mShaders["terrainDS"]->GetBufferPointer()),
-        mShaders["terrainDS"]->GetBufferSize()
     };
     psoDesc.PS = 
     { 
@@ -833,7 +595,7 @@ void BaselineApp::BuildTerrainPSO()
     psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
     psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
     psoDesc.SampleMask = UINT_MAX;
-    psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH;  // Patch topology for tessellation
+    psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     psoDesc.NumRenderTargets = 1;
     psoDesc.RTVFormats[0] = mBackBufferFormat;
     psoDesc.SampleDesc.Count = m4xMsaaState ? 4 : 1;
@@ -891,11 +653,6 @@ void BaselineApp::UpdatePassCB(const GameTimer& gt)
 
     auto currPassCB = mCurrFrameResource->PassCB.get();
     PassConstants passConstants = mPassCB;  // Copy all members including heightmap params
-    
-    // Ensure camera position is up to date (needed for LOD and tessellation calculations)
-    XMVECTOR camPos = mCamera.GetPosition();
-    XMStoreFloat3(&passConstants.cameraPosition, camPos);
-    
     passConstants.TotalTime = gt.TotalTime();
     currPassCB->CopyData(0, passConstants);
 }
@@ -1027,16 +784,16 @@ bool BaselineApp::LoadHeightmapFromFile(const std::wstring& heightmapPath)
 
 void BaselineApp::BuildQuadtree()
 {
-    // Clear existing [[Quadtree-LOD-system]] quadtree
+    // Clear existing quadtree
     mQuadtreeRoot.reset();
     
     // Create root node covering entire terrain
     mQuadtreeRoot = std::make_unique<QuadtreeNode>(mTerrainCenter, mTerrainHalfSize, 0);
     
-    // Set maximum [[LOD-selection-algorithm]] LOD levels based on heightmap resolution
+    // Set maximum LOD levels based on heightmap resolution
     UINT maxLODLevels = CalculateMaxLODLevels();
     
-    // Recursively build [[Quadtree-LOD-system]] quadtree
+    // Recursively build quadtree
     BuildQuadtreeRecursive(mQuadtreeRoot.get(), maxLODLevels);
     
     OutputDebugString(L"Quadtree construction completed.\n");
@@ -1044,17 +801,30 @@ void BaselineApp::BuildQuadtree()
 
 UINT BaselineApp::CalculateMaxLODLevels()
 {
-    // Increase quadtree depth to split terrain into more tiles
-    // For more tiles, we'll use a fixed higher depth
-    // This creates more subdivisions and thus more tiles
-    return 6;  // Increased from calculated value to create more tiles (was ~2-3 levels)
+    // Calculate based on heightmap resolution - we want leaf nodes to be around 64x64 pixels
+    UINT width = mPassCB.heightmapWidth;
+    UINT height = mPassCB.heightmapHeight;
+    
+    // Find the larger dimension (use parentheses to prevent Windows.h macro expansion)
+    UINT maxDim = (std::max)(width, height);
+    
+    // Calculate LOD levels needed to get to ~64x64 tiles
+    UINT levels = 0;
+    while (maxDim > 64)
+    {
+        maxDim /= 2;
+        levels++;
+    }
+    
+    // Limit to reasonable maximum (8 levels should be enough for most cases)
+    return (std::min)(levels, 8u);
 }
 
 void BaselineApp::BuildQuadtreeRecursive(QuadtreeNode* node, UINT maxLevels)
 {
     if (node->level >= maxLevels)
     {
-        // This is a leaf node - create [[Terrain-tile-generation]] terrain geometry
+        // This is a leaf node - create terrain geometry
         CreateTerrainTile(node);
         return;
     }
@@ -1101,58 +871,58 @@ void BaselineApp::BuildQuadtreeRecursive(QuadtreeNode* node, UINT maxLevels)
 
 void BaselineApp::CreateTerrainTile(QuadtreeNode* node)
 {
-    // This method creates quad patches for [[GPU-tessellation-system]] GPU tessellation
-    // Each patch is a quad with 4 control points
+    // This method creates the actual geometry for a terrain tile at this quadtree node
     ID3D12Device* device = md3dDevice.Get();
     
-    // Create a grid of patches - each patch is a quad (4 control points)
-    // For simplicity, we'll create a single patch per tile
-    // More patches = more control, but single patch works well for terrain
-    const UINT patchesPerSide = 1;  // 1 patch per tile (can be increased for more control)
-    const UINT controlPointsPerPatch = 4;  // Quad patch has 4 control points for [[GPU-tessellation-system]] tessellation
-    const UINT totalControlPoints = (patchesPerSide + 1) * (patchesPerSide + 1);
-    const UINT totalPatches = patchesPerSide * patchesPerSide;
+    // Calculate tile dimensions based on node size and heightmap resolution
+    UINT verticesPerSide = 10;  // 10x10 grid = 10 vertices per side (9x9 quads)
+    UINT totalVertices = verticesPerSide * verticesPerSide;
+    UINT totalIndices = (verticesPerSide - 1) * (verticesPerSide - 1) * 6;  // 2 triangles per quad
     
-    // Calculate control point positions
-    std::vector<DirectX::XMFLOAT3> vertices(totalControlPoints);
-    std::vector<UINT> indices(totalPatches * controlPointsPerPatch);
+    // Calculate vertex positions
+    std::vector<DirectX::XMFLOAT3> vertices(totalVertices);
+    std::vector<UINT> indices(totalIndices);
     
     float tileWorldSize = node->halfSize * 2.0f;
-    float spacing = tileWorldSize / patchesPerSide;
+    float vertexSpacing = tileWorldSize / (verticesPerSide - 1);
     
-    // Create control points in a grid
-    for (UINT z = 0; z <= patchesPerSide; z++)
+    for (UINT z = 0; z < verticesPerSide; z++)
     {
-        for (UINT x = 0; x <= patchesPerSide; x++)
+        for (UINT x = 0; x < verticesPerSide; x++)
         {
-            UINT index = z * (patchesPerSide + 1) + x;
+            UINT index = z * verticesPerSide + x;
             
-            // Calculate world position (height will be sampled in domain shader)
-            float worldX = node->center.x - node->halfSize + x * spacing;
-            float worldZ = node->center.z - node->halfSize + z * spacing;
+            // Calculate world position
+            float worldX = node->center.x - node->halfSize + x * vertexSpacing;
+            float worldZ = node->center.z - node->halfSize + z * vertexSpacing;
             
-            vertices[index] = { worldX, 0.0f, worldZ };
+            // Sample height from heightmap (will be implemented in vertex shader)
+            float height = 0.0f;  // Placeholder - actual height will be sampled in shader
+            
+            vertices[index] = { worldX, height, worldZ };
         }
     }
     
-    // Create patch indices (each patch references 4 control points)
-    UINT patchIndex = 0;
-    for (UINT z = 0; z < patchesPerSide; z++)
+    // Create indices (triangle list)
+    UINT index = 0;
+    for (UINT z = 0; z < verticesPerSide - 1; z++)
     {
-        for (UINT x = 0; x < patchesPerSide; x++)
+        for (UINT x = 0; x < verticesPerSide - 1; x++)
         {
-            UINT topLeft = z * (patchesPerSide + 1) + x;
+            UINT topLeft = z * verticesPerSide + x;
             UINT topRight = topLeft + 1;
-            UINT bottomLeft = (z + 1) * (patchesPerSide + 1) + x;
+            UINT bottomLeft = (z + 1) * verticesPerSide + x;
             UINT bottomRight = bottomLeft + 1;
             
-            // Quad patch order for counter-clockwise winding: top-left, bottom-left, bottom-right, top-right
-            // This ensures correct front-facing triangles when tessellated
-            indices[patchIndex * 4 + 0] = topLeft;
-            indices[patchIndex * 4 + 1] = bottomLeft;
-            indices[patchIndex * 4 + 2] = bottomRight;
-            indices[patchIndex * 4 + 3] = topRight;
-            patchIndex++;
+            // First triangle (top-left, bottom-left, top-right)
+            indices[index++] = topLeft;
+            indices[index++] = bottomLeft;
+            indices[index++] = topRight;
+            
+            // Second triangle (top-right, bottom-left, bottom-right)
+            indices[index++] = topRight;
+            indices[index++] = bottomLeft;
+            indices[index++] = bottomRight;
         }
     }
     
@@ -1166,7 +936,7 @@ void BaselineApp::CreateTerrainTile(QuadtreeNode* node)
         &heapProps,
         D3D12_HEAP_FLAG_NONE,
         &resourceDesc,
-        D3D12_RESOURCE_STATE_COMMON,
+        D3D12_RESOURCE_STATE_COPY_DEST,
         nullptr,
         IID_PPV_ARGS(&node->vertexBuffer)
     ));
@@ -1188,12 +958,6 @@ void BaselineApp::CreateTerrainTile(QuadtreeNode* node)
     ThrowIfFailed(node->vertexBufferUpload->Map(0, &readRange, reinterpret_cast<void**>(&vertexDataBegin)));
     memcpy(vertexDataBegin, vertices.data(), vertexBufferSize);
     node->vertexBufferUpload->Unmap(0, nullptr);
-    
-    // Transition vertex buffer to COPY_DEST before copying
-    mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
-        node->vertexBuffer.Get(),
-        D3D12_RESOURCE_STATE_COMMON,
-        D3D12_RESOURCE_STATE_COPY_DEST));
     
     // Copy data to default heap
     D3D12_SUBRESOURCE_DATA vertexData = {};
@@ -1220,7 +984,7 @@ void BaselineApp::CreateTerrainTile(QuadtreeNode* node)
         &heapProps,
         D3D12_HEAP_FLAG_NONE,
         &resourceDesc,
-        D3D12_RESOURCE_STATE_COMMON,
+        D3D12_RESOURCE_STATE_COPY_DEST,
         nullptr,
         IID_PPV_ARGS(&node->indexBuffer)
     ));
@@ -1241,12 +1005,6 @@ void BaselineApp::CreateTerrainTile(QuadtreeNode* node)
     ThrowIfFailed(node->indexBufferUpload->Map(0, &readRange, reinterpret_cast<void**>(&indexDataBegin)));
     memcpy(indexDataBegin, indices.data(), indexBufferSize);
     node->indexBufferUpload->Unmap(0, nullptr);
-    
-    // Transition index buffer to COPY_DEST before copying
-    mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
-        node->indexBuffer.Get(),
-        D3D12_RESOURCE_STATE_COMMON,
-        D3D12_RESOURCE_STATE_COPY_DEST));
     
     // Copy data to default heap
     D3D12_SUBRESOURCE_DATA indexData = {};
@@ -1272,23 +1030,17 @@ void BaselineApp::CreateTerrainTile(QuadtreeNode* node)
     node->indexBufferView.SizeInBytes = indexBufferSize;
     node->indexBufferView.Format = DXGI_FORMAT_R32_UINT;
     
-    // Store patch count for rendering
-    node->indexCount = totalPatches * controlPointsPerPatch;  // This is the number of indices (4 per patch)
-    
-    node->vertexCount = totalControlPoints;
-    node->indexCount = totalPatches * controlPointsPerPatch;  // Total indices for patches (4 per patch)
+    node->vertexCount = totalVertices;
+    node->indexCount = totalIndices;
     node->needsUpdate = false;
     
-    // Note: Skirts are not needed with [[GPU-tessellation-system]] GPU tessellation as the domain shader handles edge continuity
-    // The tessellation factors ensure smooth transitions between [[LOD-selection-algorithm]] LOD levels
-    
-    // Calculate screen space error for this [[LOD-selection-algorithm]] LOD level
+    // Calculate screen space error for this LOD level
     CalculateScreenSpaceError(node);
 }
 
 void BaselineApp::CalculateScreenSpaceError(QuadtreeNode* node)
 {
-    // [[LOD-selection-algorithm]] Screen space error calculation based on node size and LOD level
+    // Screen space error calculation based on node size and LOD level
     // Formula: error = (node_size / (2^lod_level)) / screen_resolution * viewport_height
     
     // Get viewport dimensions
@@ -1297,7 +1049,7 @@ void BaselineApp::CalculateScreenSpaceError(QuadtreeNode* node)
     // Calculate base error (higher levels have smaller error)
     float baseError = node->halfSize * 2.0f;  // Full node size
     
-    // Scale by [[LOD-selection-algorithm]] LOD level - each level halves the error
+    // Scale by LOD level - each level halves the error
     for (UINT i = 0; i < node->level; i++)
     {
         baseError /= 2.0f;
@@ -1311,272 +1063,6 @@ void BaselineApp::CalculateScreenSpaceError(QuadtreeNode* node)
     float terrainComplexityFactor = 1.0f;  // Placeholder - would be calculated from heightmap data
     
     node->screenSpaceError *= terrainComplexityFactor;
-}
-
-void BaselineApp::CreateSkirtGeometry(QuadtreeNode* node, UINT verticesPerSide, float tileWorldSize)
-{
-    // Skirts are additional geometry added to the edges of terrain tiles
-    // to hide gaps that appear when adjacent tiles have different LOD levels
-    // Skirt extends downward from the edge vertices
-    const float skirtHeight = -50.0f;  // Negative Y to extend downward
-    
-    ID3D12Device* device = md3dDevice.Get();
-    float vertexSpacing = tileWorldSize / (verticesPerSide - 1);
-    
-    // Create skirt vertices for all 4 edges (North, South, East, West)
-    // Each edge needs verticesPerSide vertices (top edge) + verticesPerSide vertices (bottom edge of skirt)
-    UINT skirtVerticesPerEdge = verticesPerSide;
-    UINT totalSkirtVertices = skirtVerticesPerEdge * 4 * 2;  // 4 edges, 2 rows per edge (top and bottom)
-    UINT totalSkirtIndices = (skirtVerticesPerEdge - 1) * 4 * 6;  // 2 triangles per quad, 4 edges
-    
-    std::vector<DirectX::XMFLOAT3> skirtVertices(totalSkirtVertices);
-    std::vector<UINT> skirtIndices(totalSkirtIndices);
-    
-    UINT vertexIndex = 0;
-    
-    // North edge (top, Z = -halfSize)
-    // Top row (edge of terrain)
-    for (UINT x = 0; x < skirtVerticesPerEdge; x++)
-    {
-        float worldX = node->center.x - node->halfSize + x * vertexSpacing;
-        float worldZ = node->center.z - node->halfSize;
-        skirtVertices[vertexIndex++] = { worldX, 0.0f, worldZ };  // Top edge at terrain level
-    }
-    // Bottom row (skirt extends downward)
-    for (UINT x = 0; x < skirtVerticesPerEdge; x++)
-    {
-        float worldX = node->center.x - node->halfSize + x * vertexSpacing;
-        float worldZ = node->center.z - node->halfSize;
-        skirtVertices[vertexIndex++] = { worldX, skirtHeight, worldZ };  // Skirt extends down
-    }
-    
-    // South edge (bottom, Z = +halfSize)
-    for (UINT x = 0; x < skirtVerticesPerEdge; x++)
-    {
-        float worldX = node->center.x - node->halfSize + x * vertexSpacing;
-        float worldZ = node->center.z + node->halfSize;
-        skirtVertices[vertexIndex++] = { worldX, 0.0f, worldZ };
-    }
-    for (UINT x = 0; x < skirtVerticesPerEdge; x++)
-    {
-        float worldX = node->center.x - node->halfSize + x * vertexSpacing;
-        float worldZ = node->center.z + node->halfSize;
-        skirtVertices[vertexIndex++] = { worldX, skirtHeight, worldZ };
-    }
-    
-    // West edge (left, X = -halfSize)
-    for (UINT z = 0; z < skirtVerticesPerEdge; z++)
-    {
-        float worldX = node->center.x - node->halfSize;
-        float worldZ = node->center.z - node->halfSize + z * vertexSpacing;
-        skirtVertices[vertexIndex++] = { worldX, 0.0f, worldZ };
-    }
-    for (UINT z = 0; z < skirtVerticesPerEdge; z++)
-    {
-        float worldX = node->center.x - node->halfSize;
-        float worldZ = node->center.z - node->halfSize + z * vertexSpacing;
-        skirtVertices[vertexIndex++] = { worldX, skirtHeight, worldZ };
-    }
-    
-    // East edge (right, X = +halfSize)
-    for (UINT z = 0; z < skirtVerticesPerEdge; z++)
-    {
-        float worldX = node->center.x + node->halfSize;
-        float worldZ = node->center.z - node->halfSize + z * vertexSpacing;
-        skirtVertices[vertexIndex++] = { worldX, 0.0f, worldZ };
-    }
-    for (UINT z = 0; z < skirtVerticesPerEdge; z++)
-    {
-        float worldX = node->center.x + node->halfSize;
-        float worldZ = node->center.z - node->halfSize + z * vertexSpacing;
-        skirtVertices[vertexIndex++] = { worldX, skirtHeight, worldZ };
-    }
-    
-    // Create indices for skirts (quads connecting top edge to bottom skirt)
-    UINT index = 0;
-    UINT baseIndex = 0;
-    
-    // North edge skirt
-    for (UINT x = 0; x < skirtVerticesPerEdge - 1; x++)
-    {
-        UINT topLeft = baseIndex + x;
-        UINT topRight = baseIndex + x + 1;
-        UINT bottomLeft = baseIndex + skirtVerticesPerEdge + x;
-        UINT bottomRight = baseIndex + skirtVerticesPerEdge + x + 1;
-        
-        skirtIndices[index++] = topLeft;
-        skirtIndices[index++] = bottomLeft;
-        skirtIndices[index++] = topRight;
-        
-        skirtIndices[index++] = topRight;
-        skirtIndices[index++] = bottomLeft;
-        skirtIndices[index++] = bottomRight;
-    }
-    
-    // South edge skirt
-    baseIndex = skirtVerticesPerEdge * 2;
-    for (UINT x = 0; x < skirtVerticesPerEdge - 1; x++)
-    {
-        UINT topLeft = baseIndex + x;
-        UINT topRight = baseIndex + x + 1;
-        UINT bottomLeft = baseIndex + skirtVerticesPerEdge + x;
-        UINT bottomRight = baseIndex + skirtVerticesPerEdge + x + 1;
-        
-        skirtIndices[index++] = topLeft;
-        skirtIndices[index++] = bottomLeft;
-        skirtIndices[index++] = topRight;
-        
-        skirtIndices[index++] = topRight;
-        skirtIndices[index++] = bottomLeft;
-        skirtIndices[index++] = bottomRight;
-    }
-    
-    // West edge skirt
-    baseIndex = skirtVerticesPerEdge * 4;
-    for (UINT z = 0; z < skirtVerticesPerEdge - 1; z++)
-    {
-        UINT topLeft = baseIndex + z;
-        UINT topRight = baseIndex + z + 1;
-        UINT bottomLeft = baseIndex + skirtVerticesPerEdge + z;
-        UINT bottomRight = baseIndex + skirtVerticesPerEdge + z + 1;
-        
-        skirtIndices[index++] = topLeft;
-        skirtIndices[index++] = bottomLeft;
-        skirtIndices[index++] = topRight;
-        
-        skirtIndices[index++] = topRight;
-        skirtIndices[index++] = bottomLeft;
-        skirtIndices[index++] = bottomRight;
-    }
-    
-    // East edge skirt
-    baseIndex = skirtVerticesPerEdge * 6;
-    for (UINT z = 0; z < skirtVerticesPerEdge - 1; z++)
-    {
-        UINT topLeft = baseIndex + z;
-        UINT topRight = baseIndex + z + 1;
-        UINT bottomLeft = baseIndex + skirtVerticesPerEdge + z;
-        UINT bottomRight = baseIndex + skirtVerticesPerEdge + z + 1;
-        
-        skirtIndices[index++] = topLeft;
-        skirtIndices[index++] = bottomLeft;
-        skirtIndices[index++] = topRight;
-        
-        skirtIndices[index++] = topRight;
-        skirtIndices[index++] = bottomLeft;
-        skirtIndices[index++] = bottomRight;
-    }
-    
-    // Create vertex buffer for skirts
-    const UINT skirtVertexBufferSize = static_cast<UINT>(skirtVertices.size() * sizeof(DirectX::XMFLOAT3));
-    
-    D3D12_HEAP_PROPERTIES heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-    D3D12_RESOURCE_DESC resourceDesc = CD3DX12_RESOURCE_DESC::Buffer(skirtVertexBufferSize);
-    
-    ThrowIfFailed(device->CreateCommittedResource(
-        &heapProps,
-        D3D12_HEAP_FLAG_NONE,
-        &resourceDesc,
-        D3D12_RESOURCE_STATE_COMMON,
-        nullptr,
-        IID_PPV_ARGS(&node->skirtVertexBuffer)
-    ));
-    
-    heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-    ThrowIfFailed(device->CreateCommittedResource(
-        &heapProps,
-        D3D12_HEAP_FLAG_NONE,
-        &CD3DX12_RESOURCE_DESC::Buffer(skirtVertexBufferSize),
-        D3D12_RESOURCE_STATE_GENERIC_READ,
-        nullptr,
-        IID_PPV_ARGS(&node->skirtVertexBufferUpload)
-    ));
-    
-    UINT8* vertexDataBegin;
-    CD3DX12_RANGE readRange(0, 0);
-    ThrowIfFailed(node->skirtVertexBufferUpload->Map(0, &readRange, reinterpret_cast<void**>(&vertexDataBegin)));
-    memcpy(vertexDataBegin, skirtVertices.data(), skirtVertexBufferSize);
-    node->skirtVertexBufferUpload->Unmap(0, nullptr);
-    
-    // Transition skirt vertex buffer to COPY_DEST before copying
-    mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
-        node->skirtVertexBuffer.Get(),
-        D3D12_RESOURCE_STATE_COMMON,
-        D3D12_RESOURCE_STATE_COPY_DEST));
-    
-    D3D12_SUBRESOURCE_DATA vertexData = {};
-    vertexData.pData = skirtVertices.data();
-    vertexData.RowPitch = skirtVertexBufferSize;
-    vertexData.SlicePitch = skirtVertexBufferSize;
-    
-    UpdateSubresources(mCommandList.Get(), node->skirtVertexBuffer.Get(),
-                      node->skirtVertexBufferUpload.Get(), 0, 0, 1, &vertexData);
-    
-    mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
-        node->skirtVertexBuffer.Get(),
-        D3D12_RESOURCE_STATE_COPY_DEST,
-        D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER));
-    
-    // Create index buffer for skirts
-    const UINT skirtIndexBufferSize = static_cast<UINT>(skirtIndices.size() * sizeof(UINT));
-    
-    heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-    resourceDesc = CD3DX12_RESOURCE_DESC::Buffer(skirtIndexBufferSize);
-    
-    ThrowIfFailed(device->CreateCommittedResource(
-        &heapProps,
-        D3D12_HEAP_FLAG_NONE,
-        &resourceDesc,
-        D3D12_RESOURCE_STATE_COMMON,
-        nullptr,
-        IID_PPV_ARGS(&node->skirtIndexBuffer)
-    ));
-    
-    heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-    ThrowIfFailed(device->CreateCommittedResource(
-        &heapProps,
-        D3D12_HEAP_FLAG_NONE,
-        &CD3DX12_RESOURCE_DESC::Buffer(skirtIndexBufferSize),
-        D3D12_RESOURCE_STATE_GENERIC_READ,
-        nullptr,
-        IID_PPV_ARGS(&node->skirtIndexBufferUpload)
-    ));
-    
-    UINT8* indexDataBegin;
-    ThrowIfFailed(node->skirtIndexBufferUpload->Map(0, &readRange, reinterpret_cast<void**>(&indexDataBegin)));
-    memcpy(indexDataBegin, skirtIndices.data(), skirtIndexBufferSize);
-    node->skirtIndexBufferUpload->Unmap(0, nullptr);
-    
-    // Transition skirt index buffer to COPY_DEST before copying
-    mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
-        node->skirtIndexBuffer.Get(),
-        D3D12_RESOURCE_STATE_COMMON,
-        D3D12_RESOURCE_STATE_COPY_DEST));
-    
-    D3D12_SUBRESOURCE_DATA indexData = {};
-    indexData.pData = skirtIndices.data();
-    indexData.RowPitch = skirtIndexBufferSize;
-    indexData.SlicePitch = skirtIndexBufferSize;
-    
-    UpdateSubresources(mCommandList.Get(), node->skirtIndexBuffer.Get(),
-                      node->skirtIndexBufferUpload.Get(), 0, 0, 1, &indexData);
-    
-    mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
-        node->skirtIndexBuffer.Get(),
-        D3D12_RESOURCE_STATE_COPY_DEST,
-        D3D12_RESOURCE_STATE_INDEX_BUFFER));
-    
-    // Set up buffer views
-    node->skirtVertexBufferView.BufferLocation = node->skirtVertexBuffer->GetGPUVirtualAddress();
-    node->skirtVertexBufferView.StrideInBytes = sizeof(DirectX::XMFLOAT3);
-    node->skirtVertexBufferView.SizeInBytes = skirtVertexBufferSize;
-    
-    node->skirtIndexBufferView.BufferLocation = node->skirtIndexBuffer->GetGPUVirtualAddress();
-    node->skirtIndexBufferView.SizeInBytes = skirtIndexBufferSize;
-    node->skirtIndexBufferView.Format = DXGI_FORMAT_R32_UINT;
-    
-    node->skirtVertexCount = totalSkirtVertices;
-    node->skirtIndexCount = totalSkirtIndices;
 }
 
 void BaselineApp::ResetRenderFlags(QuadtreeNode* node)
@@ -1595,7 +1081,7 @@ void BaselineApp::SelectLODLevels()
     // Reset all render flags first
     ResetRenderFlags(mQuadtreeRoot.get());
     
-    // Start [[LOD-selection-algorithm]] LOD selection from root node
+    // Start from root node
     SelectLODRecursive(mQuadtreeRoot.get(), false);
 }
 
@@ -1604,50 +1090,50 @@ void BaselineApp::SelectLODRecursive(QuadtreeNode* node, bool parentVisible)
     if (!node)
         return;
     
-    // Check visibility for THIS node individually using [[Frustum-culling-module]] frustum culling
-    bool isVisible = IsNodeVisible(node);
+    // Check visibility first
+    bool isVisible = parentVisible || IsNodeVisible(node);
     node->isVisible = isVisible;
     
     if (!isVisible)
     {
-        // If not visible, mark as not rendering and don't process children
-        node->shouldRender = false;
+        // If not visible, don't process children
         return;
     }
     
-    // Get camera distance to node center using 2D distance (X, Z only - no Y)
-    // This makes [[LOD-selection-algorithm]] LOD transitions more obvious and easier to test
-    DirectX::XMFLOAT3 cameraPos = mPassCB.cameraPosition;
-    float dx = cameraPos.x - node->center.x;
-    float dz = cameraPos.z - node->center.z;
-    float distance = sqrtf(dx * dx + dz * dz);  // 2D distance only
+    // Get camera distance to node center
+    XMVECTOR cameraPos = XMLoadFloat3(&mPassCB.cameraPosition);
+    XMVECTOR nodeCenter = XMLoadFloat3(&node->center);
+    XMVECTOR diff = cameraPos - nodeCenter;
+    float distance = XMVectorGetX(XMVector3Length(diff));
     
-    // Improved [[LOD-selection-algorithm]] LOD calculation: closer nodes should subdivide for more detail
-    // Calculate threshold based on node size and level
-    // Smaller nodes (deeper levels) need to be closer to subdivide
-    // Base threshold: larger nodes can be subdivided from further away
-    float nodeSize = node->halfSize * 2.0f;  // Full size of the node
-    float baseThreshold = nodeSize * 2.0f;  // Base distance threshold
+    // Calculate screen space error threshold (typically 2-5 pixels)
+    const float maxScreenSpaceError = 3.0f;
     
-    // Deeper levels (higher level number) need to be closer to subdivide
-    // Level 0: threshold = baseThreshold
-    // Level 1: threshold = baseThreshold * 0.5
-    // Level 2: threshold = baseThreshold * 0.25
-    // etc.
-    float levelMultiplier = 1.0f / (1.0f + node->level * 0.5f);
-    float lodDistanceThreshold = baseThreshold * levelMultiplier;
-    
-    // Check if this node should subdivide (use children) or render itself
+    // Check if this node's error is acceptable or if we should use children
     bool useThisNode = true;
     
     if (node->HasChildren())
     {
-        // If we're close enough, subdivide to get more detail
-        // Closer = higher detail needed = subdivide
-        if (distance < lodDistanceThreshold)
+        // Check if children would provide better detail
+        for (auto& child : node->children)
         {
-            // Close enough - use children for more detail
-            useThisNode = false;
+            if (child)
+            {
+                // Calculate distance to child center
+                XMVECTOR childCenter = XMLoadFloat3(&child->center);
+                XMVECTOR childDiff = cameraPos - childCenter;
+                float childDistance = XMVectorGetX(XMVector3Length(childDiff));
+                
+                // Calculate projected screen space error for child
+                float projectedError = child->screenSpaceError * (childDistance / (distance + 0.001f));
+                
+                if (projectedError < maxScreenSpaceError && childDistance < distance)
+                {
+                    // Child is detailed enough - use children instead of this node
+                    useThisNode = false;
+                    break;
+                }
+            }
         }
     }
     
@@ -1664,12 +1150,12 @@ void BaselineApp::SelectLODRecursive(QuadtreeNode* node, bool parentVisible)
     {
         // Don't render this node, use children instead
         node->shouldRender = false;
-        // Process each child (each child will check its own visibility)
+        // Process each child
         for (auto& child : node->children)
         {
             if (child)
             {
-                SelectLODRecursive(child.get(), false);  // Pass false, each child checks its own visibility
+                SelectLODRecursive(child.get(), isVisible);
             }
         }
     }
@@ -1680,19 +1166,16 @@ bool BaselineApp::IsNodeVisible(const QuadtreeNode* node) const
     if (!node)
         return false;
     
-    // Only cull if [[Frustum-culling-module]] frustum culling is enabled
-    if (!mFrustumCullingEnabled)
-        return true;
+    // Create bounding sphere for this node
+    // The radius should be the diagonal of the square node
+    float radius = node->halfSize * 1.414f;  // sqrt(2) for diagonal
+    DirectX::BoundingSphere sphere;
+    sphere.Center = node->center;
+    sphere.Radius = radius;
     
-    // Create bounding box for this node (more accurate than sphere for terrain tiles)
-    DirectX::BoundingBox boundingBox;
-    boundingBox.Center = node->center;
-    boundingBox.Extents = DirectX::XMFLOAT3(node->halfSize, 100.0f, node->halfSize);  // Height of 100 for terrain
+    // Check against frustum
+    DirectX::ContainmentType containment = mCameraFrustum.Contains(sphere);
     
-    // Check against [[Frustum-culling-module]] frustum - only cull if completely outside (DISJOINT)
-    DirectX::ContainmentType containment = mCameraFrustum.Contains(boundingBox);
-    
-    // Return true if not completely outside (INTERSECTS or CONTAINS)
     return containment != DirectX::DISJOINT;
 }
 
@@ -1701,7 +1184,7 @@ void BaselineApp::RenderQuadtreeNodes(ID3D12GraphicsCommandList* cmdList, Quadtr
     if (!node || !node->isVisible)
         return;
     
-    // If this node should be rendered ([[LOD-selection-algorithm]] LOD selected it)
+    // If this node should be rendered (LOD selected it)
     if (node->shouldRender)
     {
         // This is a leaf node - render it
@@ -1710,7 +1193,7 @@ void BaselineApp::RenderQuadtreeNodes(ID3D12GraphicsCommandList* cmdList, Quadtr
             // Set vertex and index buffers
             cmdList->IASetVertexBuffers(0, 1, &node->vertexBufferView);
             cmdList->IASetIndexBuffer(&node->indexBufferView);
-            cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_4_CONTROL_POINT_PATCHLIST);  // Patch topology for [[GPU-tessellation-system]] tessellation
+            cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             
             // Set world matrix (identity for now, terrain is in world space)
             XMMATRIX world = XMMatrixIdentity();
@@ -1729,11 +1212,8 @@ void BaselineApp::RenderQuadtreeNodes(ID3D12GraphicsCommandList* cmdList, Quadtr
             D3D12_GPU_VIRTUAL_ADDRESS objCBAddress = objectCB->GetGPUVirtualAddress() + 0 * objCBByteSize;
             cmdList->SetGraphicsRootConstantBufferView(0, objCBAddress);
             
-            // Draw patches - indexCount is total indices (4 per patch)
-            // DrawIndexedInstanced with patch topology: first param is index count (4 per patch)
+            // Draw the terrain tile
             cmdList->DrawIndexedInstanced(node->indexCount, 1, 0, 0, 0);
-            
-            // Note: Skirts not needed with [[GPU-tessellation-system]] GPU tessellation - domain shader handles continuity
         }
     }
     else
@@ -1768,20 +1248,16 @@ void BaselineApp::OnMouseUp(WPARAM btnState, int x, int y)
 
 void BaselineApp::OnMouseMove(WPARAM btnState, int x, int y)
 {
-    // Don't process camera movement if IMGUI is capturing mouse input
-    if (!ImGui::GetIO().WantCaptureMouse)
+    if(mRightMouseDown)
     {
-        if(mRightMouseDown)
-        {
-            // Make each pixel correspond to a quarter of a degree.
-            float dx = XMConvertToRadians(0.25f * static_cast<float>(x - mLastMousePos.x));
-            float dy = XMConvertToRadians(0.25f * static_cast<float>(y - mLastMousePos.y));
+        // Make each pixel correspond to a quarter of a degree.
+        float dx = XMConvertToRadians(0.25f * static_cast<float>(x - mLastMousePos.x));
+        float dy = XMConvertToRadians(0.25f * static_cast<float>(y - mLastMousePos.y));
 
-            mCamera.Pitch(dy);
-            mCamera.Yaw(dx);
+        mCamera.Pitch(dy);
+        mCamera.Yaw(dx);
 
-            mCamera.UpdateViewMatrix();
-        }
+        mCamera.UpdateViewMatrix();
     }
 
     mLastMousePos.x = x;
@@ -1793,11 +1269,4 @@ void BaselineApp::OnKeyPressed(const GameTimer& gt, WPARAM key)
     // WASD movement is handled in Update() via GetAsyncKeyState
     // This method is called for key down events, but we're handling continuous
     // movement in Update() instead for smoother control
-    
-    // 'C' key to update [[Frustum-culling-module]] frustum culling (for testing)
-    if (key == 'C' || key == 'c')
-    {
-        mFrustumNeedsUpdate = true;
-        OutputDebugString(L"Frustum culling update triggered by 'C' key.\n");
-    }
 }
